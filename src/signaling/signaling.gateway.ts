@@ -15,18 +15,29 @@ export class SignalingGateway {
   server: Server;
 
   // JOIN ROOM
-  @SubscribeMessage('join-room')
-  handleJoin(
-    @MessageBody() data: { roomId: string; userName: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    client.join(data.roomId);
+ @SubscribeMessage('join-room')
+handleJoin(
+  @MessageBody() data: { roomId: string; userName: string },
+  @ConnectedSocket() client: Socket,
+) {
+  client.join(data.roomId);
 
-    client.to(data.roomId).emit('user-joined', {
-      socketId: client.id,
-      userName: data.userName,
-    });
+  // Notify others
+  client.to(data.roomId).emit('user-joined', {
+    socketId: client.id,
+    userName: data.userName,
+  });
+
+  // 🔥 IMPORTANT FIX: SEND READY WHEN 2 USERS PRESEN
+  const room = this.server.sockets.adapter.rooms.get(data.roomId);
+
+  if (room && room.size === 2) {
+    console.log(`🔥 Room ${data.roomId} ready (2 users)`);
+
+    // Send to BOTH users
+    this.server.to(data.roomId).emit('ready');
   }
+}
 
   // OFFER
   @SubscribeMessage('offer')
