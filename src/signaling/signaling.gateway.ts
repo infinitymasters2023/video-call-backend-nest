@@ -133,54 +133,80 @@ export class SignalingGateway implements OnGatewayDisconnect {
    *         (success/failure) is forwarded back to the admin socket.
    */
   @SubscribeMessage('switch-camera')
-  handleSwitchCamera(
-    @MessageBody() data: any,
-    @ConnectedSocket() client: Socket,
-  ) {
-    const roomId = data?.roomId ?? (client as any).roomId;
-    const senderIsAdmin = !!(data?.isAdmin ?? (client as any).isAdmin);
+handleSwitchCamera(
+  @MessageBody() data: any,
+  @ConnectedSocket() client: Socket,
+) {
+  const roomId = data?.roomId ?? (client as any).roomId;
+  const senderIsAdmin = !!(data?.isAdmin ?? (client as any).isAdmin);
 
-    console.log(
-      `📷 switch-camera received from ${(client as any).userName} | isAdmin=${senderIsAdmin} | room=${roomId}`,
+  console.log('======================================');
+  console.log('📷 SWITCH-CAMERA EVENT RECEIVED');
+  console.log('Sender Name:', (client as any).userName);
+  console.log('Sender Socket ID:', client.id);
+  console.log('Room ID:', roomId);
+  console.log('Is Admin:', senderIsAdmin);
+  console.log('Payload:', data);
+  console.log('======================================');
+
+  // Only admin can trigger
+  if (!senderIsAdmin) {
+    console.warn(
+      `❌ BLOCKED: Non-admin ${(client as any).userName} tried switching camera`,
     );
-
-    if (!senderIsAdmin) {
-      // Guard: only admins should be sending this event
-      console.warn(
-        `⚠️  Non-admin ${(client as any).userName} tried to switch camera — ignored`,
-      );
-      return;
-    }
-
-    // Find the guest socket (the only other socket in the room that is NOT admin)
-    const room = this.server.sockets.adapter.rooms.get(roomId);
-    if (!room) {
-      console.warn(`⚠️  Room ${roomId} not found`);
-      return;
-    }
-
-    let guestSocketId: string | null = null;
-    for (const sid of room) {
-      if (sid === client.id) continue; // skip the sender (admin)
-      const sock = this.server.sockets.sockets.get(sid);
-      if (sock && !(sock as any).isAdmin) {
-        guestSocketId = sid;
-        break;
-      }
-    }
-
-    if (!guestSocketId) {
-      console.warn(`⚠️  No guest found in room ${roomId} to flip camera`);
-      return;
-    }
-
-    console.log(`📷 Sending switch-camera to guest socket ${guestSocketId}`);
-    // Emit ONLY to the guest — not to the whole room, not back to admin
-    this.server.to(guestSocketId).emit('switch-camera', {
-      fromAdmin: true,
-      roomId,
-    });
+    return;
   }
+
+  // Find room
+  const room = this.server.sockets.adapter.rooms.get(roomId);
+
+  console.log('📷 ROOM USERS:', room);
+
+  if (!room) {
+    console.warn(`❌ Room not found: ${roomId}`);
+    return;
+  }
+
+  let guestSocketId: string | null = null;
+
+  // Find guest socket
+  for (const sid of room) {
+    console.log('Checking socket:', sid);
+
+    if (sid === client.id) {
+      console.log('Skipping sender/admin socket');
+      continue;
+    }
+
+    const sock = this.server.sockets.sockets.get(sid);
+
+    console.log('Socket Metadata:', {
+      id: sid,
+      userName: (sock as any)?.userName,
+      isAdmin: (sock as any)?.isAdmin,
+    });
+
+    if (sock && !(sock as any).isAdmin) {
+      guestSocketId = sid;
+      console.log('✅ Guest Found:', guestSocketId);
+      break;
+    }
+  }
+
+  if (!guestSocketId) {
+    console.warn(`❌ No guest found in room ${roomId}`);
+    return;
+  }
+
+  console.log(`📷 Sending switch-camera to guest socket ${guestSocketId}`);
+
+  this.server.to(guestSocketId).emit('switch-camera', {
+    fromAdmin: true,
+    roomId,
+  });
+
+  console.log('✅ switch-camera emitted successfully');
+}
 
   // =========================
   // CAMERA FLIP RESULT (NEW)
@@ -190,35 +216,67 @@ export class SignalingGateway implements OnGatewayDisconnect {
    * We forward it back to the admin so they can see success/failure in their log panel.
    */
   @SubscribeMessage('camera-flip-result')
-  handleCameraFlipResult(
-    @MessageBody() data: any,
-    @ConnectedSocket() client: Socket,
-  ) {
-    const roomId = data?.roomId ?? (client as any).roomId;
+handleCameraFlipResult(
+  @MessageBody() data: any,
+  @ConnectedSocket() client: Socket,
+) {
+  const roomId = data?.roomId ?? (client as any).roomId;
 
-    console.log(
-      `📷 camera-flip-result from ${(client as any).userName} | success=${data?.success} | facingMode=${data?.facingMode ?? 'n/a'} | room=${roomId}`,
-    );
+  console.log('======================================');
+  console.log('📷 CAMERA-FLIP-RESULT RECEIVED');
+  console.log('From User:', (client as any).userName);
+  console.log('From Socket:', client.id);
+  console.log('Room ID:', roomId);
+  console.log('Payload:', data);
+  console.log('======================================');
 
-    // Find the admin socket in the room and send the result to them only
-    const room = this.server.sockets.adapter.rooms.get(roomId);
-    if (!room) return;
+  const room = this.server.sockets.adapter.rooms.get(roomId);
 
-    for (const sid of room) {
-      if (sid === client.id) continue; // don't echo back to sender
-      const sock = this.server.sockets.sockets.get(sid);
-      if (sock && (sock as any).isAdmin) {
-        this.server.to(sid).emit('camera-flip-result', {
-          success: data?.success,
-          facingMode: data?.facingMode,
-          error: data?.error,
-        });
-        console.log(`📷 Forwarded camera-flip-result to admin socket ${sid}`);
-        break;
-      }
+  if (!room) {
+    console.warn(`❌ Room not found for flip result: ${roomId}`);
+    return;
+  }
+
+  let adminSocketId: string | null = null;
+
+  for (const sid of room) {
+    console.log('Checking socket:', sid);
+
+    if (sid === client.id) {
+      console.log('Skipping sender socket');
+      continue;
+    }
+
+    const sock = this.server.sockets.sockets.get(sid);
+
+    console.log('Socket Metadata:', {
+      id: sid,
+      userName: (sock as any)?.userName,
+      isAdmin: (sock as any)?.isAdmin,
+    });
+
+    if (sock && (sock as any).isAdmin) {
+      adminSocketId = sid;
+      console.log('✅ Admin Found:', adminSocketId);
+      break;
     }
   }
 
+  if (!adminSocketId) {
+    console.warn('❌ No admin socket found!');
+    return;
+  }
+
+  this.server.to(adminSocketId).emit('camera-flip-result', {
+    success: data?.success,
+    facingMode: data?.facingMode,
+    error: data?.error,
+  });
+
+  console.log(
+    `✅ camera-flip-result forwarded to admin socket ${adminSocketId}`,
+  );
+}
   // =========================
   // DISCONNECT
   // =========================
