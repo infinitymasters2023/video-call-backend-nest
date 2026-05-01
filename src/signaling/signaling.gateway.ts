@@ -33,8 +33,8 @@ export class SignalingGateway implements OnGatewayDisconnect {
 
     // Check room size before joining
     const existingRoom = this.server.sockets.adapter.rooms.get(roomId);
-    if (existingRoom && existingRoom.size >= 12) {
-      console.warn(`❌ Room ${roomId} is full (12 users max). ${userName} rejected.`);
+    if (existingRoom && existingRoom.size >= 6) {
+      console.warn(`❌ Room ${roomId} is full (6 users max). ${userName} rejected.`);
       client.emit('room-full');
       return;
     }
@@ -87,7 +87,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
     if (data.targetId) {
       client.to(data.targetId).emit('offer', { ...data, senderId: client.id });
     } else {
-      client.to(data.roomId).emit('offer', data);
+      client.to(data.roomId).emit('offer', { ...data, senderId: client.id });
     }
   }
 
@@ -99,7 +99,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
     if (data.targetId) {
       client.to(data.targetId).emit('answer', { ...data, senderId: client.id });
     } else {
-      client.to(data.roomId).emit('answer', data);
+      client.to(data.roomId).emit('answer', { ...data, senderId: client.id });
     }
   }
 
@@ -111,7 +111,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
     if (data.targetId) {
       client.to(data.targetId).emit('ice-candidate', { ...data, senderId: client.id });
     } else {
-      client.to(data.roomId).emit('ice-candidate', data);
+      client.to(data.roomId).emit('ice-candidate', { ...data, senderId: client.id });
     }
   }
 
@@ -188,32 +188,26 @@ handleSwitchCamera(
     return;
   }
 
-  let guestSocketId: string | null = null;
-
-  // Find guest socket
-  for (const sid of room) {
-    console.log('Checking socket:', sid);
-
-    if (sid === client.id) {
-      console.log('Skipping sender/admin socket');
-      continue;
-    }
-
-    const sock = this.server.sockets.sockets.get(sid);
-
-    console.log('Socket Metadata:', {
-      id: sid,
-      userName: (sock as any)?.userName,
-      isAdmin: (sock as any)?.isAdmin,
-    });
-
-    if (sock && !(sock as any).isAdmin) {
-      guestSocketId = sid;
-      console.log('✅ Guest Found:', guestSocketId);
-      break;
+  // TARGETED FLIP: If targetId is provided, send only to them
+  if (data?.targetId) {
+    const targetSock = this.server.sockets.sockets.get(data.targetId);
+    if (targetSock) {
+      console.log(`📷 TARGETED FLIP: Sending to ${data.targetId}`);
+      targetSock.emit('switch-camera', data);
+      return;
     }
   }
 
+  let guestSocketId: string | null = null;
+  // Fallback: Find first guest socket (original logic)
+  for (const sid of room) {
+    if (sid === client.id) continue;
+    const sock = this.server.sockets.sockets.get(sid);
+    if (sock && !(sock as any).isAdmin) {
+      guestSocketId = sid;
+      break;
+    }
+  }
   if (!guestSocketId) {
     console.warn(`❌ No guest found in room ${roomId}`);
     return;
