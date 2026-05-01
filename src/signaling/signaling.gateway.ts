@@ -30,6 +30,15 @@ export class SignalingGateway implements OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     const { roomId, userName, isAdmin, mode } = data;
+
+    // Check room size before joining
+    const existingRoom = this.server.sockets.adapter.rooms.get(roomId);
+    if (existingRoom && existingRoom.size >= 12) {
+      console.warn(`❌ Room ${roomId} is full (12 users max). ${userName} rejected.`);
+      client.emit('room-full');
+      return;
+    }
+
     client.join(roomId);
 
     // Store metadata on socket
@@ -50,8 +59,8 @@ export class SignalingGateway implements OnGatewayDisconnect {
 
     // Check room size
     const room = this.server.sockets.adapter.rooms.get(roomId);
-    if (room && room.size === 2) {
-      console.log(`🔥 Room ${roomId} ready (2 users)`);
+    if (room && room.size >= 2 && room.size <= 12) {
+      console.log(`🔥 Room ${roomId} ready (${room.size} users)`);
       this.server.to(roomId).emit('ready');
     }
   }
