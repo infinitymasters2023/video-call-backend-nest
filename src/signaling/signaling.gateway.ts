@@ -84,7 +84,11 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('offer')
   handleOffer(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
-    client.to(data.roomId).emit('offer', data);
+    if (data.targetId) {
+      client.to(data.targetId).emit('offer', { ...data, senderId: client.id });
+    } else {
+      client.to(data.roomId).emit('offer', data);
+    }
   }
 
   // =========================
@@ -92,7 +96,11 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('answer')
   handleAnswer(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
-    client.to(data.roomId).emit('answer', data);
+    if (data.targetId) {
+      client.to(data.targetId).emit('answer', { ...data, senderId: client.id });
+    } else {
+      client.to(data.roomId).emit('answer', data);
+    }
   }
 
   // =========================
@@ -100,7 +108,11 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('ice-candidate')
   handleIce(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
-    client.to(data.roomId).emit('ice-candidate', data);
+    if (data.targetId) {
+      client.to(data.targetId).emit('ice-candidate', { ...data, senderId: client.id });
+    } else {
+      client.to(data.roomId).emit('ice-candidate', data);
+    }
   }
 
   // =========================
