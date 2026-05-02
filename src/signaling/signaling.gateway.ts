@@ -301,6 +301,7 @@ handleCameraFlipResult(
     if (roomId) {
       client.to(roomId).emit('user-left', {
         userName: userName || 'User',
+        socketId: client.id,
       });
       console.log(`❌ ${userName} left room ${roomId}`);
     }
