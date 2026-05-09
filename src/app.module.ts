@@ -4,10 +4,18 @@ import { AppService } from './app.service';
 import { SignalingGateway } from './signaling/signaling.gateway';
 import { RoomController } from './room/room.controller';
 import { MeetingModule } from './meeting/meeting.module';
-
+import { ConfigModule } from '@nestjs/config';
+import { DatabaseModule } from './database/database.module';
+import { MediaModule } from './media/media.module';
+import { PersonInfoModule } from './person-info/personinfo.module';
 @Module({
-  imports: [MeetingModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    DatabaseModule,
+    MediaModule,
+    PersonInfoModule,
+    MeetingModule],
   controllers: [AppController, RoomController],
   providers: [AppService, SignalingGateway],
 })
-export class AppModule {}
+export class AppModule { }
