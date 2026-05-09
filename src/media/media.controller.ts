@@ -1,4 +1,4 @@
-import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get } from '@nestjs/common';
 
 import {
   ApiTags,
@@ -17,5 +17,11 @@ export class MediaController {
   async uploadDocument(@Body() dto: UploadDocumentDto) {
     return this.mediaService.uploadDocument(dto);
   }
+  @Get('doc')
+  async docmasterdata() {
+    return this.mediaService.getDocmaster();
+  }
 
+
+  getDocmaster
 }

@@ -35,9 +35,11 @@ export class MediaService {
           .toString()
           .padStart(2, '0');
 
-      const baseFolder =
-        `F:\\documents\\videocall\\${year}\\${month}`;
+      // const baseFolder =
+      //   `F:\\documents\\videocall\\${year}\\${month}`;
 
+        const baseFolder =
+        `D:\\yash\\document\\${year}\\${month}`
       // =========================
       // CREATE FOLDER
       // =========================
@@ -106,7 +108,7 @@ export class MediaService {
               dto.Remarks ?? null,
 
             Status:
-              dto.Status ?? 'U',
+             'U',
           },
         );
 
@@ -128,6 +130,42 @@ export class MediaService {
 
       this.logger.error(
         'Failed to upload document',
+        err,
+      );
+
+      throw err;
+    }
+  }
+  async getDocmaster(
+  ) {
+
+    try {
+
+      const result = await this.db.runStoredProcedure('sp_infymeet', {
+
+        Type: 4,
+      });
+
+      const response = result?.recordsets ?? null;
+
+      if (!response) {
+        return {
+          status: false,
+          data: null,
+          message: 'Data not found',
+        };
+      }
+
+      return {
+        status: true,
+        data: response,
+        message: 'Data fetched successfully',
+      };
+
+    } catch (err) {
+
+      this.logger.error(
+        'Failed to fetch meeting/user/claim info',
         err,
       );
 

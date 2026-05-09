@@ -16,9 +16,9 @@ export class UploadDocumentDto {
   @ApiProperty({ required: false })
   Remarks?: string;
 
-  @ApiProperty({ default: 'U', required: false })
+  @ApiProperty()
   Status?: string;
-  CreatedBy: any;
+  CreatedBy?: string;
 
 
 
