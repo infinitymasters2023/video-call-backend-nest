@@ -17,121 +17,121 @@ export class MediaService {
     private readonly db: DatabaseService,
 
   ) { }
- async uploadDocument(dto: UploadDocumentDto) {
+  async uploadDocument(dto: UploadDocumentDto) {
 
-  try {
+    try {
 
-    // =========================
-    // CREATE YEAR / MONTH PATH
-    // =========================
+      // =========================
+      // CREATE YEAR / MONTH PATH
+      // =========================
 
-    const now = new Date();
+      const now = new Date();
 
-    const year =
-      now.getFullYear().toString();
+      const year =
+        now.getFullYear().toString();
 
-    const month =
-      (now.getMonth() + 1)
-        .toString()
-        .padStart(2, '0');
+      const month =
+        (now.getMonth() + 1)
+          .toString()
+          .padStart(2, '0');
 
-    const baseFolder =
-      `D:\\yash\\documents\\${year}\\${month}`;
+      const baseFolder =
+        `F:\\documents\\videocall\\${year}\\${month}`;
 
-    // =========================
-    // CREATE FOLDER
-    // =========================
+      // =========================
+      // CREATE FOLDER
+      // =========================
 
-    if (!fs.existsSync(baseFolder)) {
+      if (!fs.existsSync(baseFolder)) {
 
-      fs.mkdirSync(
-        baseFolder,
-        { recursive: true },
-      );
-    }
+        fs.mkdirSync(
+          baseFolder,
+          { recursive: true },
+        );
+      }
 
-    // =========================
-    // FILE NAME
-    // =========================
+      // =========================
+      // FILE NAME
+      // =========================
 
-    const uniqueFileName =
-      `${Date.now()}_${dto.DocumentName}`;
+      const uniqueFileName =
+        `${Date.now()}_${dto.DocumentName}`;
 
-    const finalPath =
-      path.join(
-        baseFolder,
-        uniqueFileName,
-      );
+      const finalPath =
+        path.join(
+          baseFolder,
+          uniqueFileName,
+        );
 
-    // =========================
-    // BASE64 TO IMAGE FILE
-    // =========================
+      // =========================
+      // BASE64 TO IMAGE FILE
+      // =========================
 
-   const base64Data =
-  dto.DocumentPath.replace(
-    /^data:.*;base64,/,
-    '',
-  );
+      const base64Data =
+        dto.DocumentPath.replace(
+          /^data:.*;base64,/,
+          '',
+        );
 
-    fs.writeFileSync(
-      finalPath,
-      base64Data,
-      'base64',
-    );
-
-    // =========================
-    // SAVE PATH IN DB
-    // =========================
-
-    const result =
-      await this.db.runStoredProcedure(
-        'sp_infymeet',
-        {
-
-          type: 1,
-
-          TicketNo:
-            dto.TicketNo,
-
-          DocumentName:
-            dto.DocumentName,
-
-          DocumentPath:
-            finalPath,
-
-          CreatedBy:
-            dto.CreatedBy,
-
-          Remarks:
-            dto.Remarks ?? null,
-
-          Status:
-            dto.Status ?? 'U',
-        },
-      );
-
-    return {
-
-      status: true,
-
-      uploadedPath:
+      fs.writeFileSync(
         finalPath,
+        base64Data,
+        'base64',
+      );
 
-      data:
-        result?.recordsets?.[0] ?? [],
+      // =========================
+      // SAVE PATH IN DB
+      // =========================
 
-      message:
-        'Document uploaded successfully',
-    };
+      const result =
+        await this.db.runStoredProcedure(
+          'sp_infymeet',
+          {
 
-  } catch (err) {
+            type: 1,
 
-    this.logger.error(
-      'Failed to upload document',
-      err,
-    );
+            TicketNo:
+              dto.TicketNo,
 
-    throw err;
+            DocumentName:
+              dto.DocumentName,
+
+            DocumentPath:
+              finalPath,
+
+            CreatedBy:
+              dto.CreatedBy,
+
+            Remarks:
+              dto.Remarks ?? null,
+
+            Status:
+              dto.Status ?? 'U',
+          },
+        );
+
+      return {
+
+        status: true,
+
+        uploadedPath:
+          finalPath,
+
+        data:
+          result?.recordsets?.[0] ?? [],
+
+        message:
+          'Document uploaded successfully',
+      };
+
+    } catch (err) {
+
+      this.logger.error(
+        'Failed to upload document',
+        err,
+      );
+
+      throw err;
+    }
   }
-}
 }
