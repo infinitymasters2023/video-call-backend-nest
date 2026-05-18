@@ -9,6 +9,8 @@ import {
 
 import * as bodyParser from 'body-parser';
 
+import * as express from 'express';
+
 async function bootstrap() {
 
   const app =
@@ -31,6 +33,17 @@ async function bootstrap() {
       limit: '50mb',
       extended: true,
     }),
+  );
+
+  // =========================
+  // STATIC DOCUMENT FOLDER
+  // =========================
+
+  app.use(
+    '/Documents',
+    express.static(
+      'F:/documents/videocall',
+    ),
   );
 
   // =========================

@@ -22,7 +22,7 @@ export class MediaService {
     try {
 
       // =========================
-      // CREATE YEAR / MONTH PATH
+      // DATE
       // =========================
 
       const now = new Date();
@@ -30,16 +30,49 @@ export class MediaService {
       const year =
         now.getFullYear().toString();
 
-      const month =
-        (now.getMonth() + 1)
-          .toString()
-          .padStart(2, '0');
+      // MONTH NAME
+      const monthName =
+        now.toLocaleString(
+          'en-US',
+          { month: 'long' },
+        );
+
+      // =========================
+      // FILE EXTENSION
+      // =========================
+
+      const extension =
+        path.extname(
+          dto.DocumentName,
+        );
+
+      // FILE NAME WITHOUT EXTENSION
+      const originalName =
+        path.basename(
+          dto.DocumentName,
+          extension,
+        );
+
+      // CLEAN FILE NAME
+      const cleanName =
+        originalName.replace(
+          /[^a-zA-Z0-9_-]/g,
+          '_',
+        );
+
+      // UNIQUE FILE NAME
+      const uniqueFileName =
+        `${Date.now()}_${cleanName}${extension}`;
+
+      // =========================
+      // BASE FOLDER
+      // =========================
 
       const baseFolder =
-        `F:\\documents\\videocall\\${year}\\${month}`;
-
+        `F:\\documents\\videocall\\${year}\\${monthName}`;
       // const baseFolder =
-      // `D:\\yash\\document\\${year}\\${month}`
+      //   `D:\\yash\\document\\${year}\\${monthName}`;
+
       // =========================
       // CREATE FOLDER
       // =========================
@@ -53,11 +86,8 @@ export class MediaService {
       }
 
       // =========================
-      // FILE NAME
+      // FINAL PHYSICAL PATH
       // =========================
-
-      const uniqueFileName =
-        `${Date.now()}_${dto.DocumentName}`;
 
       const finalPath =
         path.join(
@@ -66,7 +96,16 @@ export class MediaService {
         );
 
       // =========================
-      // BASE64 TO IMAGE FILE
+      // PUBLIC URL
+      // =========================
+
+      const publicUrl =
+        `https://doc.infyshield.com/Documents/${year}/${monthName}/${uniqueFileName}`;
+      // const publicUrl =
+      //   `http://localhost:5083/Documents/${year}/${monthName}/${uniqueFileName}`;
+
+      // =========================
+      // BASE64 TO FILE
       // =========================
 
       const base64Data =
@@ -82,7 +121,7 @@ export class MediaService {
       );
 
       // =========================
-      // SAVE PATH IN DB
+      // SAVE IN DB
       // =========================
 
       const result =
@@ -96,10 +135,11 @@ export class MediaService {
               dto.TicketNo,
 
             DocumentName:
-              dto.DocumentName,
+              uniqueFileName,
 
+            // SAVE URL
             DocumentPath:
-              finalPath,
+              publicUrl,
 
             CreatedBy:
               dto.CreatedBy,
@@ -117,7 +157,7 @@ export class MediaService {
         status: true,
 
         uploadedPath:
-          finalPath,
+          publicUrl,
 
         data:
           result?.recordsets?.[0] ?? [],
@@ -136,6 +176,125 @@ export class MediaService {
       throw err;
     }
   }
+  // async uploadDocument(dto: UploadDocumentDto) {
+
+  //   try {
+
+  //     // =========================
+  //     // CREATE YEAR / MONTH PATH
+  //     // =========================
+
+  //     const now = new Date();
+
+  //     const year =
+  //       now.getFullYear().toString();
+
+  //     const month =
+  //       (now.getMonth() + 1)
+  //         .toString()
+  //         .padStart(2, '0');
+
+  //     // const baseFolder =
+  //     //   `F:\\documents\\videocall\\${year}\\${month}`;
+
+  //     const baseFolder =
+  //       `D:\\yash\\document\\${year}\\${month}`
+  //     // =========================
+  //     // CREATE FOLDER
+  //     // =========================
+
+  //     if (!fs.existsSync(baseFolder)) {
+
+  //       fs.mkdirSync(
+  //         baseFolder,
+  //         { recursive: true },
+  //       );
+  //     }
+
+  //     // =========================
+  //     // FILE NAME
+  //     // =========================
+
+  //     const uniqueFileName =
+  //       `${Date.now()}_${dto.DocumentName}`;
+
+  //     const finalPath =
+  //       path.join(
+  //         baseFolder,
+  //         uniqueFileName,
+  //       );
+
+  //     // =========================
+  //     // BASE64 TO IMAGE FILE
+  //     // =========================
+
+  //     const base64Data =
+  //       dto.DocumentPath.replace(
+  //         /^data:.*;base64,/,
+  //         '',
+  //       );
+
+  //     fs.writeFileSync(
+  //       finalPath,
+  //       base64Data,
+  //       'base64',
+  //     );
+
+  //     // =========================
+  //     // SAVE PATH IN DB
+  //     // =========================
+
+  //     const result =
+  //       await this.db.runStoredProcedure(
+  //         'sp_infymeet',
+  //         {
+
+  //           type: 1,
+
+  //           TicketNo:
+  //             dto.TicketNo,
+
+  //           DocumentName:
+  //             dto.DocumentName,
+
+  //           DocumentPath:
+  //             finalPath,
+
+  //           CreatedBy:
+  //             dto.CreatedBy,
+
+  //           Remarks:
+  //             dto.Remarks ?? null,
+
+  //           Status:
+  //             'U',
+  //         },
+  //       );
+
+  //     return {
+
+  //       status: true,
+
+  //       uploadedPath:
+  //         finalPath,
+
+  //       data:
+  //         result?.recordsets?.[0] ?? [],
+
+  //       message:
+  //         'Document uploaded successfully',
+  //     };
+
+  //   } catch (err) {
+
+  //     this.logger.error(
+  //       'Failed to upload document',
+  //       err,
+  //     );
+
+  //     throw err;
+  //   }
+  // }
   async getDocmaster(
   ) {
 
