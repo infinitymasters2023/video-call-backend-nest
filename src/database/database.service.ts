@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
+
     private pool: sql.ConnectionPool;
     private readonly logger = new Logger(DatabaseService.name);
     private dbConfig = sql.config;
