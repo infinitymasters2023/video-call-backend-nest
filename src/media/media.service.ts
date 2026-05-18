@@ -57,34 +57,92 @@ export class MediaService {
         )
           .replace(/ /g, '_')
           .replace(/[^a-zA-Z0-9_-]/g, '');
+      //========================
+      //Document name 
+      //===========
+      const docResult: any =
+        await this.db.runStoredProcedure(
+          'sp_infymeet',
+          {
+            type: 6,
+            DocumentName: dto.DocumentName,
+          },
+        );
 
+      const actualDocumentName =
+        String(
+          docResult?.recordsets?.[0]?.[0]
+            ?.DocumentName || 'Document',
+        )
+          .replace(/[^a-zA-Z0-9_-]/g, '');
       // =========================
       // FILE EXTENSION
       // =========================
 
-      const extension =
-        path.extname(
-          dto.DocumentName,
-        );
+      let extension = '';
+
+      if (
+        dto.DocumentPath.startsWith(
+          'data:video/webm',
+        )
+      ) {
+
+        extension = '.webm';
+
+      } else if (
+        dto.DocumentPath.startsWith(
+          'data:image/png',
+        )
+      ) {
+
+        extension = '.png';
+
+      } else if (
+        dto.DocumentPath.startsWith(
+          'data:image/jpeg',
+        )
+      ) {
+
+        extension = '.jpg';
+
+      } else if (
+        dto.DocumentPath.startsWith(
+          'data:application/pdf',
+        )
+      ) {
+
+        extension = '.pdf';
+      }
 
       // =========================
       // FILE NAME
       // =========================
-
+      const timestamp =
+        new Date()
+          .toISOString()
+          .replace(/[-:T]/g, '')
+          .slice(0, 14);
+      const formattedTimestamp =
+        `${timestamp.slice(0, 8)}_${timestamp.slice(8, 14)}`;
       const originalName =
         path.basename(
           dto.DocumentName,
           extension,
         );
-
       const cleanName =
-        originalName.replace(
-          /[^a-zA-Z0-9_-]/g,
-          '_',
+        actualDocumentName;
+      // const cleanName =
+      //   originalName.replace(
+      //     /[^a-zA-Z0-9_-]/g,
+      //     '_',
+      //   );
+      const cleanTicketNo =
+        dto.TicketNo.replace(
+          /[\/\\]/g,
+          '',
         );
-
       const uniqueFileName =
-        `${Date.now()}_${cleanName}${extension}`;
+        `${cleanTicketNo}_${cleanName}_${formattedTimestamp}${extension}`;
 
       // =========================
       // BASE FOLDER
@@ -231,4 +289,5 @@ export class MediaService {
       throw err;
     }
   }
+
 }
