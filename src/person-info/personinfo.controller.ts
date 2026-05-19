@@ -1,4 +1,4 @@
-import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param } from '@nestjs/common';
+import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param, Query } from '@nestjs/common';
 
 import {
   ApiTags,
@@ -208,10 +208,12 @@ export class PersonInfoController {
       data: resInputData,
     };
   }
-  @Get('customer-info/:ticketNo')
+  @Get('customer-info')
   async getCustomerInfoByTicketNo(
-    @Param('ticketNo')
+
+    @Query('ticketNo')
     ticketNo: string,
+
   ) {
 
     return await this.personInfoService
