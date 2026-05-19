@@ -1,4 +1,4 @@
-import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param } from '@nestjs/common';
 
 import {
   ApiTags,
@@ -208,5 +208,15 @@ export class PersonInfoController {
       data: resInputData,
     };
   }
+  @Get('customer-info/:ticketNo')
+  async getCustomerInfoByTicketNo(
+    @Param('ticketNo')
+    ticketNo: string,
+  ) {
 
+    return await this.personInfoService
+      .getCustomerInfoByTicketNo(
+        ticketNo,
+      );
+  }
 }

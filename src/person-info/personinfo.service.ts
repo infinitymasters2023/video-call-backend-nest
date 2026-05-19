@@ -97,7 +97,42 @@ export class PersonInfoService {
   }
 
 
+  async getCustomerInfoByTicketNo(
+    ticketNo: string,
+  ) {
 
+    try {
+
+      const result =
+        await this.db.runStoredProcedure(
+          'sp_infymeet',
+          {
+            type: 7,
+            TicketNo: ticketNo,
+          },
+        );
+
+      return {
+
+        status: true,
+
+        data:
+          result?.recordsets?.[0]?.[0] || null,
+
+        message:
+          'Customer info fetched successfully',
+      };
+
+    } catch (err) {
+
+      this.logger.error(
+        'Failed to fetch customer info',
+        err,
+      );
+
+      throw err;
+    }
+  }
 
 
 
