@@ -6,6 +6,6 @@ import { HelperService } from 'src/helper/helper.service';
 
 @Module({
   controllers: [PersonInfoController],
-  providers: [PersonInfoService, DatabaseService, HelperService], // ✅ FIXED
+  providers: [PersonInfoService, DatabaseService, HelperService],
 })
 export class PersonInfoModule { }
