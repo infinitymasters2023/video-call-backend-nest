@@ -39,3 +39,10 @@ export class SendMeetingDTO {
   @ApiProperty({ required: false })
   alternateMobile?: string;
 }
+
+export class TestWhatsappDto {
+  @ApiProperty({
+    example: '9876543210',
+  })
+  mobile?: string;
+}

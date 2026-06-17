@@ -4,7 +4,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { PersonInfoService } from './personinfo.service';
-import { GetServiceCallDTO, SendMeetingDTO } from './personinfo.dtos';
+import { GetServiceCallDTO, SendMeetingDTO, TestWhatsappDto } from './personinfo.dtos';
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
 
@@ -202,12 +202,17 @@ export class PersonInfoController {
           });
 
           try {
+            console.log('======================');
+            console.log('Calling WhatsApp API');
+            console.log('Mobile =>', mobile);
+            console.log('Meeting Link =>', mobileMeetingLink);
+            console.log('======================');
             const whatsappRes =
               await this.whatsappService.sendMeetingLink(
                 mobile,
                 mobileMeetingLink ?? '',
               );
-
+            console.log('WhatsApp Response =>', whatsappRes);
             resInputData.push({
               type: `whatsapp:${mobile}`,
               isSuccess: whatsappRes,
@@ -229,6 +234,42 @@ export class PersonInfoController {
       data: resInputData,
     };
   }
+  @Post('/test-whatsapp')
+  async testWhatsapp(
+    @Body() body: TestWhatsappDto,
+  ) {
+    if (!body?.mobile) {
+      return {
+        success: false,
+        error: 'mobile is required',
+      };
+    }
+    try {
+      const meetingLink =
+        `https://meetings.infyshield.com/test/${Date.now()}`;
+
+
+      const response = await this.whatsappService.sendMeetingLink(
+        body.mobile as string,
+        meetingLink,
+      );
+
+      return {
+        success: true,
+        mobile: body.mobile,
+        meetingLink,
+        response,
+      };
+
+
+    } catch (error) {
+      return {
+        success: false,
+        error: (error as any)?.response?.data || (error as Error)?.message,
+      };
+    }
+  }
+
   @Get('customer-info')
   async getCustomerInfoByTicketNo(
 
