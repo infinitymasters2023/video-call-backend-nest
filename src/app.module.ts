@@ -8,10 +8,12 @@ import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
 import { MediaModule } from './media/media.module';
 import { PersonInfoModule } from './person-info/personinfo.module';
+import { LiveTranslateModule } from './live-translate/live-translate.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     DatabaseModule,
+    LiveTranslateModule,
     MediaModule,
     PersonInfoModule,
     MeetingModule],
