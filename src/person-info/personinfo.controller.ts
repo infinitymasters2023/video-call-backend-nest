@@ -6,14 +6,17 @@ import {
 import { PersonInfoService } from './personinfo.service';
 import { GetServiceCallDTO, SendMeetingDTO } from './personinfo.dtos';
 import { HelperService } from 'src/helper/helper.service';
+import { WhatsappService } from 'src/helper/whatsapp.service';
 
 
 
 @ApiTags('person-info')
 @Controller('person-info')
 export class PersonInfoController {
-  constructor(private readonly personInfoService: PersonInfoService,
+  constructor(
+    private readonly personInfoService: PersonInfoService,
     private readonly helperService: HelperService,
+    private readonly whatsappService: WhatsappService,
   ) { }
 
 
@@ -148,7 +151,7 @@ export class PersonInfoController {
     }
 
     // =========================
-    // SMS ONLY
+    // SMS & WHATSAPP
     // =========================
 
     if (mobiles && mobiles.length > 0) {
@@ -197,6 +200,24 @@ export class PersonInfoController {
             type: mobile,
             isSuccess: mobileRes,
           });
+
+          try {
+            const whatsappRes =
+              await this.whatsappService.sendMeetingLink(
+                mobile,
+                mobileMeetingLink ?? '',
+              );
+
+            resInputData.push({
+              type: `whatsapp:${mobile}`,
+              isSuccess: whatsappRes,
+            });
+          } catch (error) {
+            resInputData.push({
+              type: `whatsapp:${mobile}`,
+              isSuccess: error,
+            });
+          }
         }),
       );
     }
