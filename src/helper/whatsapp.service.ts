@@ -17,7 +17,7 @@ export class WhatsappService {
             const projectId = '671f5ab71e0f320bf9a1aae3';
 
 
-            // Remove spaces, +, -, etc.
+            // Remove spaces, +, -, et
             mobile = mobile.replace(/\D/g, '');
 
             // Convert 10 digit mobile to 91XXXXXXXXXX
