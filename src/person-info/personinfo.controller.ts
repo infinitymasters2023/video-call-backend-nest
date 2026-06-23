@@ -7,7 +7,10 @@ import { PersonInfoService } from './personinfo.service';
 import { GetServiceCallDTO, SendMeetingDTO, TestWhatsappDto } from './personinfo.dtos';
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
+<<<<<<< HEAD
 import { MeetingSchedulerService } from './meeting-scheduler.service';
+=======
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
 
 
 
@@ -18,7 +21,10 @@ export class PersonInfoController {
     private readonly personInfoService: PersonInfoService,
     private readonly helperService: HelperService,
     private readonly whatsappService: WhatsappService,
+<<<<<<< HEAD
     private readonly meetingSchedulerService: MeetingSchedulerService,
+=======
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   ) { }
 
 
@@ -33,6 +39,7 @@ export class PersonInfoController {
   async sendMeetingLink(
     @Body() sendMeetingDto: SendMeetingDTO,
   ) {
+<<<<<<< HEAD
     if (sendMeetingDto.scheduleAt) {
       const runAt = new Date(sendMeetingDto.scheduleAt);
 
@@ -96,6 +103,9 @@ export class PersonInfoController {
   private async dispatchMeetingLink(
     sendMeetingDto: SendMeetingDTO,
   ) {
+=======
+
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
     const {
       meetingLink,
       quNumber,
@@ -347,6 +357,7 @@ export class PersonInfoController {
         ticketNo,
       );
   }
+<<<<<<< HEAD
 
   @Get('assigned-technicians')
   async getAssignedTechniciansByTicketNo(
@@ -373,4 +384,6 @@ export class PersonInfoController {
       payload,
     );
   }
+=======
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
 }

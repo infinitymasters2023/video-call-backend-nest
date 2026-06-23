@@ -1,5 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
+<<<<<<< HEAD
 import { IsISO8601, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+=======
+
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
 export class GetServiceCallDTO {
 
   @ApiProperty()
@@ -38,6 +42,7 @@ export class SendMeetingDTO {
 
   @ApiProperty({ required: false })
   alternateMobile?: string;
+<<<<<<< HEAD
 
   @ApiProperty({
     required: false,
@@ -47,6 +52,8 @@ export class SendMeetingDTO {
   @IsOptional()
   @IsISO8601()
   scheduleAt?: string;
+=======
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
 }
 
 export class TestWhatsappDto {
@@ -54,6 +61,7 @@ export class TestWhatsappDto {
     example: '9876543210',
   })
   mobile?: string;
+<<<<<<< HEAD
 }
 export class VideoCallDto {
   @ApiProperty()
@@ -90,4 +98,6 @@ export class VideoCallDto {
   @IsString()
   @IsNotEmpty()
   videoCallType?: string;
+=======
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
 }

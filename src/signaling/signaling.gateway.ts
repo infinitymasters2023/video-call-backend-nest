@@ -31,15 +31,26 @@ export class SignalingGateway implements OnGatewayDisconnect {
   ) {
     const { roomId, userName, isAdmin, mode } = data;
 
+<<<<<<< HEAD
     const existingRoom = this.server.sockets.adapter.rooms.get(roomId);
     if (existingRoom && existingRoom.size >= 12) {
       console.warn(`❌ Room ${roomId} is full (12 users max). ${userName} rejected.`);
+=======
+    // Check room size before joining
+    const existingRoom = this.server.sockets.adapter.rooms.get(roomId);
+    if (existingRoom && existingRoom.size >= 6) {
+      console.warn(`❌ Room ${roomId} is full (6 users max). ${userName} rejected.`);
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
       client.emit('room-full');
       return;
     }
 
     client.join(roomId);
 
+<<<<<<< HEAD
+=======
+    // Store metadata on socket
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
     (client as any).roomId = roomId;
     (client as any).userName = userName;
     (client as any).isAdmin = !!isAdmin;
@@ -47,6 +58,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
 
     console.log(`✅ ${userName} joined ${roomId} (${mode ?? 'video'}) | admin=${!!isAdmin}`);
 
+<<<<<<< HEAD
     // Tell the joiner who is already in the room
     if (existingRoom) {
       const peers: Array<{ socketId: string; userName: string; isAdmin: boolean }> = [];
@@ -69,13 +81,24 @@ export class SignalingGateway implements OnGatewayDisconnect {
     client.to(roomId).emit('user-joined', {
       socketId: client.id,
       peerId: client.id,
+=======
+    // Notify other users in the room
+    client.to(roomId).emit('user-joined', {
+      socketId: client.id,
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
       userName,
       isAdmin,
       mode,
     });
 
+<<<<<<< HEAD
     const room = this.server.sockets.adapter.rooms.get(roomId);
     if (room && room.size >= 2) {
+=======
+    // Check room size
+    const room = this.server.sockets.adapter.rooms.get(roomId);
+    if (room && room.size >= 2 && room.size <= 12) {
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
       console.log(`🔥 Room ${roomId} ready (${room.size} users)`);
       this.server.to(roomId).emit('ready');
     }
@@ -87,6 +110,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
   @SubscribeMessage('chat-message')
   handleChat(
     @MessageBody()
+<<<<<<< HEAD
     data: {
       roomId: string;
       text: string;
@@ -130,6 +154,14 @@ export class SignalingGateway implements OnGatewayDisconnect {
     if (data?.roomId) {
       client.to(data.roomId).emit(event, payload);
     }
+=======
+    data: { roomId: string; text: string; userName: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { roomId, text, userName } = data;
+    client.to(roomId).emit('chat-message', { text, userName });
+    console.log(`💬 ${userName}: ${text}`);
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -137,7 +169,15 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('offer')
   handleOffer(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+<<<<<<< HEAD
     this.relayToPeer(client, 'offer', data);
+=======
+    if (data.targetId) {
+      client.to(data.targetId).emit('offer', { ...data, senderId: client.id });
+    } else {
+      client.to(data.roomId).emit('offer', { ...data, senderId: client.id });
+    }
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -145,7 +185,15 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('answer')
   handleAnswer(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+<<<<<<< HEAD
     this.relayToPeer(client, 'answer', data);
+=======
+    if (data.targetId) {
+      client.to(data.targetId).emit('answer', { ...data, senderId: client.id });
+    } else {
+      client.to(data.roomId).emit('answer', { ...data, senderId: client.id });
+    }
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -153,7 +201,15 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('ice-candidate')
   handleIce(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+<<<<<<< HEAD
     this.relayToPeer(client, 'ice-candidate', data);
+=======
+    if (data.targetId) {
+      client.to(data.targetId).emit('ice-candidate', { ...data, senderId: client.id });
+    } else {
+      client.to(data.roomId).emit('ice-candidate', { ...data, senderId: client.id });
+    }
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -164,6 +220,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
     @MessageBody() data: any,
     @ConnectedSocket() client: Socket,
   ) {
+<<<<<<< HEAD
     client.to(data.roomId).emit('toggle-mic', {
       ...data,
       peerId: client.id,
@@ -245,6 +302,9 @@ export class SignalingGateway implements OnGatewayDisconnect {
     const payload = { roomId, reason: 'admin-ended' };
     this.server.in(roomId).emit('meeting-ended', payload);
     console.log(`🛑 Admin ended meeting in ${roomId}`);
+=======
+    client.to(data.roomId).emit('toggle-mic', data);
+>>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
