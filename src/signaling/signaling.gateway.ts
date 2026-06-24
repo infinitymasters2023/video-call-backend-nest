@@ -13,7 +13,7 @@ import { Server, Socket } from 'socket.io';
 })
 export class SignalingGateway implements OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   // =========================
   // JOIN ROOM
@@ -31,26 +31,15 @@ export class SignalingGateway implements OnGatewayDisconnect {
   ) {
     const { roomId, userName, isAdmin, mode } = data;
 
-<<<<<<< HEAD
     const existingRoom = this.server.sockets.adapter.rooms.get(roomId);
     if (existingRoom && existingRoom.size >= 12) {
       console.warn(`❌ Room ${roomId} is full (12 users max). ${userName} rejected.`);
-=======
-    // Check room size before joining
-    const existingRoom = this.server.sockets.adapter.rooms.get(roomId);
-    if (existingRoom && existingRoom.size >= 6) {
-      console.warn(`❌ Room ${roomId} is full (6 users max). ${userName} rejected.`);
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
       client.emit('room-full');
       return;
     }
 
     client.join(roomId);
 
-<<<<<<< HEAD
-=======
-    // Store metadata on socket
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
     (client as any).roomId = roomId;
     (client as any).userName = userName;
     (client as any).isAdmin = !!isAdmin;
@@ -58,7 +47,6 @@ export class SignalingGateway implements OnGatewayDisconnect {
 
     console.log(`✅ ${userName} joined ${roomId} (${mode ?? 'video'}) | admin=${!!isAdmin}`);
 
-<<<<<<< HEAD
     // Tell the joiner who is already in the room
     if (existingRoom) {
       const peers: Array<{ socketId: string; userName: string; isAdmin: boolean }> = [];
@@ -81,24 +69,13 @@ export class SignalingGateway implements OnGatewayDisconnect {
     client.to(roomId).emit('user-joined', {
       socketId: client.id,
       peerId: client.id,
-=======
-    // Notify other users in the room
-    client.to(roomId).emit('user-joined', {
-      socketId: client.id,
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
       userName,
       isAdmin,
       mode,
     });
 
-<<<<<<< HEAD
     const room = this.server.sockets.adapter.rooms.get(roomId);
     if (room && room.size >= 2) {
-=======
-    // Check room size
-    const room = this.server.sockets.adapter.rooms.get(roomId);
-    if (room && room.size >= 2 && room.size <= 12) {
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
       console.log(`🔥 Room ${roomId} ready (${room.size} users)`);
       this.server.to(roomId).emit('ready');
     }
@@ -110,7 +87,6 @@ export class SignalingGateway implements OnGatewayDisconnect {
   @SubscribeMessage('chat-message')
   handleChat(
     @MessageBody()
-<<<<<<< HEAD
     data: {
       roomId: string;
       text: string;
@@ -154,14 +130,6 @@ export class SignalingGateway implements OnGatewayDisconnect {
     if (data?.roomId) {
       client.to(data.roomId).emit(event, payload);
     }
-=======
-    data: { roomId: string; text: string; userName: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { roomId, text, userName } = data;
-    client.to(roomId).emit('chat-message', { text, userName });
-    console.log(`💬 ${userName}: ${text}`);
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -169,15 +137,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('offer')
   handleOffer(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
-<<<<<<< HEAD
     this.relayToPeer(client, 'offer', data);
-=======
-    if (data.targetId) {
-      client.to(data.targetId).emit('offer', { ...data, senderId: client.id });
-    } else {
-      client.to(data.roomId).emit('offer', { ...data, senderId: client.id });
-    }
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -185,15 +145,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('answer')
   handleAnswer(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
-<<<<<<< HEAD
     this.relayToPeer(client, 'answer', data);
-=======
-    if (data.targetId) {
-      client.to(data.targetId).emit('answer', { ...data, senderId: client.id });
-    } else {
-      client.to(data.roomId).emit('answer', { ...data, senderId: client.id });
-    }
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -201,15 +153,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   @SubscribeMessage('ice-candidate')
   handleIce(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
-<<<<<<< HEAD
     this.relayToPeer(client, 'ice-candidate', data);
-=======
-    if (data.targetId) {
-      client.to(data.targetId).emit('ice-candidate', { ...data, senderId: client.id });
-    } else {
-      client.to(data.roomId).emit('ice-candidate', { ...data, senderId: client.id });
-    }
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -220,7 +164,6 @@ export class SignalingGateway implements OnGatewayDisconnect {
     @MessageBody() data: any,
     @ConnectedSocket() client: Socket,
   ) {
-<<<<<<< HEAD
     client.to(data.roomId).emit('toggle-mic', {
       ...data,
       peerId: client.id,
@@ -302,9 +245,6 @@ export class SignalingGateway implements OnGatewayDisconnect {
     const payload = { roomId, reason: 'admin-ended' };
     this.server.in(roomId).emit('meeting-ended', payload);
     console.log(`🛑 Admin ended meeting in ${roomId}`);
-=======
-    client.to(data.roomId).emit('toggle-mic', data);
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
   }
 
   // =========================
@@ -335,74 +275,67 @@ export class SignalingGateway implements OnGatewayDisconnect {
    *         (success/failure) is forwarded back to the admin socket.
    */
   @SubscribeMessage('switch-camera')
-handleSwitchCamera(
-  @MessageBody() data: any,
-  @ConnectedSocket() client: Socket,
-) {
-  const roomId = data?.roomId ?? (client as any).roomId;
-  const senderIsAdmin = !!(data?.isAdmin ?? (client as any).isAdmin);
+  handleSwitchCamera(
+    @MessageBody() data: any,
+    @ConnectedSocket() client: Socket,
+  ) {
+    const roomId = data?.roomId ?? (client as any).roomId;
+    const senderIsAdmin = !!(data?.isAdmin ?? (client as any).isAdmin);
 
-  console.log('======================================');
-  console.log('📷 SWITCH-CAMERA EVENT RECEIVED');
-  console.log('Sender Name:', (client as any).userName);
-  console.log('Sender Socket ID:', client.id);
-  console.log('Room ID:', roomId);
-  console.log('Is Admin:', senderIsAdmin);
-  console.log('Payload:', data);
-  console.log('======================================');
 
-  // Only admin can trigger
-  if (!senderIsAdmin) {
-    console.warn(
-      `❌ BLOCKED: Non-admin ${(client as any).userName} tried switching camera`,
-    );
-    return;
-  }
 
-  // Find room
-  const room = this.server.sockets.adapter.rooms.get(roomId);
-
-  console.log('📷 ROOM USERS:', room);
-
-  if (!room) {
-    console.warn(`❌ Room not found: ${roomId}`);
-    return;
-  }
-
-  // TARGETED FLIP: If targetId is provided, send only to them
-  if (data?.targetId) {
-    const targetSock = this.server.sockets.sockets.get(data.targetId);
-    if (targetSock) {
-      console.log(`📷 TARGETED FLIP: Sending to ${data.targetId}`);
-      targetSock.emit('switch-camera', data);
+    // Only admin can trigger
+    if (!senderIsAdmin) {
+      console.warn(
+        `❌ BLOCKED: Non-admin ${(client as any).userName} tried switching camera`,
+      );
       return;
     }
-  }
 
-  let guestSocketId: string | null = null;
-  // Fallback: Find first guest socket (original logic)
-  for (const sid of room) {
-    if (sid === client.id) continue;
-    const sock = this.server.sockets.sockets.get(sid);
-    if (sock && !(sock as any).isAdmin) {
-      guestSocketId = sid;
-      break;
+    // Find room
+    const room = this.server.sockets.adapter.rooms.get(roomId);
+
+    console.log('📷 ROOM USERS:', room);
+
+    if (!room) {
+      console.warn(`❌ Room not found: ${roomId}`);
+      return;
     }
+
+    // TARGETED FLIP: If targetId is provided, send only to them
+    if (data?.targetId) {
+      const targetSock = this.server.sockets.sockets.get(data.targetId);
+      if (targetSock) {
+        console.log(`📷 TARGETED FLIP: Sending to ${data.targetId}`);
+        targetSock.emit('switch-camera', data);
+        return;
+      }
+    }
+
+    let guestSocketId: string | null = null;
+    // Fallback: Find first guest socket (original logic)
+    for (const sid of room) {
+      if (sid === client.id) continue;
+      const sock = this.server.sockets.sockets.get(sid);
+      if (sock && !(sock as any).isAdmin) {
+        guestSocketId = sid;
+        break;
+      }
+    }
+    if (!guestSocketId) {
+      console.warn(`❌ No guest found in room ${roomId}`);
+      return;
+    }
+
+    console.log(`📷 Sending switch-camera to guest socket ${guestSocketId}`);
+
+    this.server.to(guestSocketId).emit('switch-camera', {
+      fromAdmin: true,
+      roomId,
+    });
+
+    console.log('✅ switch-camera emitted successfully');
   }
-  if (!guestSocketId) {
-    console.warn(`❌ No guest found in room ${roomId}`);
-    return;
-  }
-
-  console.log(`📷 Sending switch-camera to guest socket ${guestSocketId}`);
-
-  this.server.to(guestSocketId).emit('switch-camera', {
-    fromAdmin: true,
-    roomId,
-  });
-
-  console.log('✅ switch-camera emitted successfully');
-}
 
   // =========================
   // CAMERA FLIP RESULT (NEW)
@@ -412,67 +345,67 @@ handleSwitchCamera(
    * We forward it back to the admin so they can see success/failure in their log panel.
    */
   @SubscribeMessage('camera-flip-result')
-handleCameraFlipResult(
-  @MessageBody() data: any,
-  @ConnectedSocket() client: Socket,
-) {
-  const roomId = data?.roomId ?? (client as any).roomId;
+  handleCameraFlipResult(
+    @MessageBody() data: any,
+    @ConnectedSocket() client: Socket,
+  ) {
+    const roomId = data?.roomId ?? (client as any).roomId;
 
-  console.log('======================================');
-  console.log('📷 CAMERA-FLIP-RESULT RECEIVED');
-  console.log('From User:', (client as any).userName);
-  console.log('From Socket:', client.id);
-  console.log('Room ID:', roomId);
-  console.log('Payload:', data);
-  console.log('======================================');
+    console.log('======================================');
+    console.log('📷 CAMERA-FLIP-RESULT RECEIVED');
+    console.log('From User:', (client as any).userName);
+    console.log('From Socket:', client.id);
+    console.log('Room ID:', roomId);
+    console.log('Payload:', data);
+    console.log('======================================');
 
-  const room = this.server.sockets.adapter.rooms.get(roomId);
+    const room = this.server.sockets.adapter.rooms.get(roomId);
 
-  if (!room) {
-    console.warn(`❌ Room not found for flip result: ${roomId}`);
-    return;
-  }
-
-  let adminSocketId: string | null = null;
-
-  for (const sid of room) {
-    console.log('Checking socket:', sid);
-
-    if (sid === client.id) {
-      console.log('Skipping sender socket');
-      continue;
+    if (!room) {
+      console.warn(`❌ Room not found for flip result: ${roomId}`);
+      return;
     }
 
-    const sock = this.server.sockets.sockets.get(sid);
+    let adminSocketId: string | null = null;
 
-    console.log('Socket Metadata:', {
-      id: sid,
-      userName: (sock as any)?.userName,
-      isAdmin: (sock as any)?.isAdmin,
+    for (const sid of room) {
+      console.log('Checking socket:', sid);
+
+      if (sid === client.id) {
+        console.log('Skipping sender socket');
+        continue;
+      }
+
+      const sock = this.server.sockets.sockets.get(sid);
+
+      console.log('Socket Metadata:', {
+        id: sid,
+        userName: (sock as any)?.userName,
+        isAdmin: (sock as any)?.isAdmin,
+      });
+
+      if (sock && (sock as any).isAdmin) {
+        adminSocketId = sid;
+        console.log('✅ Admin Found:', adminSocketId);
+        break;
+      }
+    }
+
+    if (!adminSocketId) {
+      console.warn('❌ No admin socket found!');
+      return;
+    }
+
+    this.server.to(adminSocketId).emit('camera-flip-result', {
+      success: data?.success,
+      facingMode: data?.facingMode,
+      error: data?.error,
     });
 
-    if (sock && (sock as any).isAdmin) {
-      adminSocketId = sid;
-      console.log('✅ Admin Found:', adminSocketId);
-      break;
-    }
+    console.log(
+      `✅ camera-flip-result forwarded to admin socket ${adminSocketId}`,
+    );
   }
-
-  if (!adminSocketId) {
-    console.warn('❌ No admin socket found!');
-    return;
-  }
-
-  this.server.to(adminSocketId).emit('camera-flip-result', {
-    success: data?.success,
-    facingMode: data?.facingMode,
-    error: data?.error,
-  });
-
-  console.log(
-    `✅ camera-flip-result forwarded to admin socket ${adminSocketId}`,
-  );
-}
   // =========================
   // DISCONNECT
   // =========================

@@ -5,13 +5,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
-<<<<<<< HEAD
 import { GetServiceCallDTO, VideoCallDto } from './personinfo.dtos';
 import axios from 'axios';
-=======
-import { GetServiceCallDTO } from './personinfo.dtos';
-
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
 
 
 @Injectable()
@@ -140,7 +135,6 @@ export class PersonInfoService {
   }
 
 
-<<<<<<< HEAD
   async getAssignedTechniciansByTicketNo(
     ticketNo: string,
   ) {
@@ -205,7 +199,4 @@ export class PersonInfoService {
       throw err;
     }
   }
-=======
-
->>>>>>> 26b7d8a42141b511da941f95f5c6ae14e2661c10
 }
