@@ -7,6 +7,7 @@ import { PersonInfoService } from './personinfo.service';
 import { GetServiceCallDTO, SendMeetingDTO, TestWhatsappDto } from './personinfo.dtos';
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
+import { MeetingSchedulerService } from './meeting-scheduler.service';
 
 
 
@@ -17,6 +18,7 @@ export class PersonInfoController {
     private readonly personInfoService: PersonInfoService,
     private readonly helperService: HelperService,
     private readonly whatsappService: WhatsappService,
+    private readonly meetingSchedulerService: MeetingSchedulerService,
   ) { }
 
 
@@ -31,7 +33,69 @@ export class PersonInfoController {
   async sendMeetingLink(
     @Body() sendMeetingDto: SendMeetingDTO,
   ) {
+    if (sendMeetingDto.scheduleAt) {
+      const runAt = new Date(sendMeetingDto.scheduleAt);
 
+      if (Number.isNaN(runAt.getTime())) {
+        return {
+          statusCode: 400,
+          isSuccess: false,
+          message: 'Invalid scheduleAt datetime',
+          data: null,
+        };
+      }
+
+      if (runAt.getTime() <= Date.now()) {
+        return {
+          statusCode: 400,
+          isSuccess: false,
+          message: 'scheduleAt must be a future datetime',
+          data: null,
+        };
+      }
+
+      const scheduled = this.meetingSchedulerService.scheduleMeeting(
+        runAt,
+        async () => this.dispatchMeetingLink(sendMeetingDto),
+      );
+
+      return {
+        statusCode: 202,
+        isSuccess: true,
+        message: 'Meeting link send scheduled successfully',
+        data: scheduled,
+      };
+    }
+
+    return this.dispatchMeetingLink(sendMeetingDto);
+  }
+
+  @Get('/meeting_schedule/:scheduleId')
+  async getMeetingScheduleStatus(
+    @Param('scheduleId') scheduleId: string,
+  ) {
+    const job = this.meetingSchedulerService.getJobStatus(scheduleId);
+
+    if (!job) {
+      return {
+        statusCode: 404,
+        isSuccess: false,
+        message: 'Scheduled meeting not found',
+        data: null,
+      };
+    }
+
+    return {
+      statusCode: 200,
+      isSuccess: true,
+      message: 'Scheduled meeting fetched successfully',
+      data: job,
+    };
+  }
+
+  private async dispatchMeetingLink(
+    sendMeetingDto: SendMeetingDTO,
+  ) {
     const {
       meetingLink,
       quNumber,
@@ -282,5 +346,31 @@ export class PersonInfoController {
       .getCustomerInfoByTicketNo(
         ticketNo,
       );
+  }
+
+  @Get('assigned-technicians')
+  async getAssignedTechniciansByTicketNo(
+    @Query('ticketNo')
+    ticketNo: string,
+  ) {
+    return this.personInfoService.getAssignedTechniciansByTicketNo(
+      ticketNo,
+    );
+  }
+  @Post('video-call-request')
+  async createVideoCall(
+    @Body() payload: {
+      ticketNo: string;
+      roomId: string;
+      callerId: string;
+      callerName: string;
+      receiverId: string;
+      receiverName: string;
+      videoCallType: string;
+    },
+  ) {
+    return this.personInfoService.createVideoCall(
+      payload,
+    );
   }
 }

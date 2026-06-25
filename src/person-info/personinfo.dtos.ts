@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-
+import { IsISO8601, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 export class GetServiceCallDTO {
 
   @ApiProperty()
@@ -38,6 +38,15 @@ export class SendMeetingDTO {
 
   @ApiProperty({ required: false })
   alternateMobile?: string;
+
+  @ApiProperty({
+    required: false,
+    example: '2026-06-22T13:30:00.000Z',
+    description: 'If provided, meeting link notifications are scheduled for this datetime',
+  })
+  @IsOptional()
+  @IsISO8601()
+  scheduleAt?: string;
 }
 
 export class TestWhatsappDto {
@@ -45,4 +54,40 @@ export class TestWhatsappDto {
     example: '9876543210',
   })
   mobile?: string;
+}
+export class VideoCallDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  ticketNo?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  roomId?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  callerId?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  callerName?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  receiverId?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  receiverName?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  videoCallType?: string;
 }

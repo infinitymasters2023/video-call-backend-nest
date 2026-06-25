@@ -9,11 +9,15 @@ import { DatabaseModule } from './database/database.module';
 import { MediaModule } from './media/media.module';
 import { PersonInfoModule } from './person-info/personinfo.module';
 import { LiveTranslateModule } from './live-translate/live-translate.module';
+import { LiveTranscribeModule } from './live-transcribe/live-transcribe.module';
+import { AuthModule } from './auth/auth.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     DatabaseModule,
+    AuthModule,
     LiveTranslateModule,
+    LiveTranscribeModule,
     MediaModule,
     PersonInfoModule,
     MeetingModule],

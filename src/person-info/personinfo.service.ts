@@ -5,8 +5,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
-import { GetServiceCallDTO } from './personinfo.dtos';
-
+import { GetServiceCallDTO, VideoCallDto } from './personinfo.dtos';
+import axios from 'axios';
 
 
 @Injectable()
@@ -135,5 +135,68 @@ export class PersonInfoService {
   }
 
 
+  async getAssignedTechniciansByTicketNo(
+    ticketNo: string,
+  ) {
+    try {
+      const result =
+        await this.db.runStoredProcedure(
+          'sp_infymeet',
+          {
+            type: 8,
+            TicketNo: ticketNo,
+          },
+        );
 
+      return {
+        status: true,
+
+        data:
+          result?.recordsets?.[0] || [],
+
+        message:
+          'Assigned technicians fetched successfully',
+      };
+    } catch (err) {
+      this.logger.error(
+        'Failed to fetch assigned technicians',
+        err,
+      );
+
+      throw err;
+    }
+  }
+  async createVideoCall(payload: VideoCallDto) {
+    try {
+      const token =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtb2JpbGVObyI6IjgwNzc3MjE0ODUiLCJ0ZWNobmljaWFuSWQiOjIyMywidGVjaG5pY2lhbk5hbWUiOiJBbWFuIFNpbmdoIiwiaWF0IjoxNzgxODQ0NzUwfQ.4U_lV0t9bVlhh4d3D8u203UJIBsRNLLW3gODeLA7s6M';
+
+      const response = await axios.post(
+        'https://serviceengineerapi.infyshield.com/video-call/request',
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      return {
+        status: true,
+
+        data: response.data,
+
+        message:
+          'Video call request created successfully',
+      };
+    } catch (err) {
+      this.logger.error(
+        'Failed to create video call request',
+        err,
+      );
+
+      throw err;
+    }
+  }
 }

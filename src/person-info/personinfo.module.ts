@@ -5,10 +5,17 @@ import { PersonInfoService } from './personinfo.service';
 import { PersonInfoController } from './personinfo.controller';
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
+import { MeetingSchedulerService } from './meeting-scheduler.service';
 
 @Module({
   imports: [HttpModule],
   controllers: [PersonInfoController],
-  providers: [PersonInfoService, DatabaseService, HelperService, WhatsappService],
+  providers: [
+    PersonInfoService,
+    DatabaseService,
+    HelperService,
+    WhatsappService,
+    MeetingSchedulerService,
+  ],
 })
 export class PersonInfoModule { }

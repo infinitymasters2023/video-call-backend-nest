@@ -132,6 +132,12 @@ export class HelperService {
     }
 
 
-
+    async getLastSixDigits(inputString: string): Promise<string> {
+        if (inputString.length <= 6) {
+            return inputString; // Return the entire input if it has 6 or fewer characters
+        } else {
+            return inputString.substring(inputString.length - 6); // Return the last six characters
+        }
+    }
 
 }
