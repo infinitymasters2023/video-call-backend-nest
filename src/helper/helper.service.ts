@@ -52,14 +52,40 @@ export class HelperService {
 
 
     /*===== Send Email Service ========*/
-    async sendEmail(template: string, data: any, to: string, subject: string) {
+    async sendEmail(
+        template: string,
+        data: any,
+        to: string,
+        subject: string,
+        cc?: string | string[],
+        icalEvent?: { method?: string; filename?: string; content: string },
+    ) {
         const compiledTemplate = handlebars.compile(template)(data);
-        const mailOptions = {
+        const mailOptions: {
+            from: string;
+            to: string;
+            subject: string;
+            html: string;
+            cc?: string | string[];
+            icalEvent?: { method?: string; filename?: string; content: string };
+        } = {
             from: 'no-reply@infinityassurance.com',
             to,
             subject,
             html: compiledTemplate,
         };
+        if (cc && (Array.isArray(cc) ? cc.length > 0 : cc.trim() !== '')) {
+            mailOptions.cc = cc;
+        }
+        if (icalEvent && icalEvent.content) {
+            // nodemailer adds this as a text/calendar part so Gmail / Apple Mail
+            // / Outlook detect it as a calendar invite and auto-add the event.
+            mailOptions.icalEvent = {
+                method: icalEvent.method || 'REQUEST',
+                filename: icalEvent.filename || 'invite.ics',
+                content: icalEvent.content,
+            };
+        }
         try {
             const response = await this.transporter.sendMail(mailOptions);
             if (response.messageId) {

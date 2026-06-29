@@ -56,14 +56,48 @@ export class SendCustomInviteDTO {
   @IsNotEmpty()
   meetingLink: string;
 
-  @ApiProperty({ type: [String], description: 'Email addresses to invite' })
+  @ApiProperty({ type: [String], description: 'Email addresses to invite (To)' })
   @IsNotEmpty()
   emails: string[];
+
+  @ApiProperty({ required: false, type: [String], description: 'CC email addresses' })
+  @IsOptional()
+  cc?: string[];
+
+  @ApiProperty({ required: false, description: 'Meeting title / agenda' })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Scheduled meeting datetime shown inside the email (always displayed if set)',
+  })
+  @IsOptional()
+  @IsISO8601()
+  meetingTime?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Meeting duration in minutes (used for the calendar event). Default 60.',
+  })
+  @IsOptional()
+  durationMinutes?: number;
 
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
   participantName?: string;
+
+  @ApiProperty({ required: false, description: 'Organizer email — host link is sent here' })
+  @IsOptional()
+  @IsString()
+  hostEmail?: string;
+
+  @ApiProperty({ required: false, description: 'Host link (organizer joins as host)' })
+  @IsOptional()
+  @IsString()
+  hostLink?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

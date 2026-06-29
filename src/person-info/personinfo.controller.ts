@@ -1,4 +1,5 @@
 import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param, Query } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 
 import {
   ApiTags,
@@ -305,6 +306,18 @@ export class PersonInfoController {
   async sendCustomInvite(
     @Body() dto: SendCustomInviteDTO,
   ) {
+    // The organizer's host link is always sent immediately (even when the
+    // invitee emails are scheduled for later) so they can save / start it now.
+    let hostEmailSent = false;
+    if (dto.hostEmail && dto.hostLink) {
+      try {
+        const r = await this.dispatchHostEmail(dto);
+        hostEmailSent = !!r;
+      } catch {
+        hostEmailSent = false;
+      }
+    }
+
     if (dto.scheduleAt) {
       const runAt = new Date(dto.scheduleAt);
 
@@ -334,28 +347,125 @@ export class PersonInfoController {
       return {
         statusCode: 202,
         isSuccess: true,
-        message: 'Invite email scheduled successfully',
-        data: scheduled,
+        message: hostEmailSent
+          ? 'Meeting scheduled — invites queued and host link emailed to you'
+          : 'Invite email scheduled successfully',
+        data: { ...scheduled, hostEmailSent },
       };
     }
 
-    return this.dispatchCustomInvite(dto);
+    const res = await this.dispatchCustomInvite(dto);
+    return { ...res, data: { result: (res as any)?.data, hostEmailSent } };
+  }
+
+  /** Human-readable IST time string for the email body. */
+  private formatWhen(source?: string): string {
+    if (!source) return '';
+    const when = new Date(source);
+    if (Number.isNaN(when.getTime())) return '';
+    return (
+      when.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }) + ' (IST)'
+    );
+  }
+
+  /** Send the organizer their private host link (joins as host). */
+  private async dispatchHostEmail(dto: SendCustomInviteDTO) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const hostEmail = (dto.hostEmail ?? '').trim().toLowerCase();
+    if (!emailRegex.test(hostEmail) || !dto.hostLink) return null;
+
+    const inviterName = dto.participantName?.trim() || 'Host';
+    const title = dto.title?.trim();
+    const whenText = this.formatWhen(dto.meetingTime || dto.scheduleAt);
+
+    const subject = title
+      ? `You're hosting: ${title}`
+      : 'Your meeting host link';
+
+    const titleBlock = title
+      ? `<p style="margin:0 0 8px"><strong>Meeting:</strong> ${title}</p>`
+      : '';
+    const whenBlock = whenText
+      ? `<p style="margin:0 0 8px"><strong>When:</strong> ${whenText}</p>`
+      : '';
+
+    const template = `
+      <div dir="ltr">
+        <p>Hi ${inviterName},</p>
+        <p>You're the host of this meeting. Use the private link below to start it and admit people from the waiting room.</p>
+        ${titleBlock}
+        ${whenBlock}
+        <p>🎬 Host link (keep this private): <a href="${dto.hostLink}">Start the meeting as host</a></p>
+        <p style="color:#64748b;font-size:13px">Anyone who opens this link joins as a host, so don't forward it to guests — send them the regular invite instead.</p>
+        <p>
+          Regards<br>
+          InfyMeet<br>
+          Infinity Assurance Solutions Pvt. Ltd.
+        </p>
+      </div>
+    `;
+
+    let icalEvent:
+      | { method: string; filename: string; content: string }
+      | undefined;
+    const whenSource = dto.meetingTime || dto.scheduleAt;
+    if (whenSource) {
+      const start = new Date(whenSource);
+      if (!Number.isNaN(start.getTime())) {
+        const durationMinutes =
+          Number(dto.durationMinutes) > 0 ? Number(dto.durationMinutes) : 60;
+        const ics = this.buildMeetingIcs({
+          start,
+          durationMinutes,
+          summary: title || `${inviterName} – Video meeting (host)`,
+          description: `Host link: ${dto.hostLink}`,
+          location: dto.hostLink,
+          organizerName: inviterName,
+          organizerEmail: 'no-reply@infinityassurance.com',
+          attendees: [hostEmail],
+        });
+        icalEvent = { method: 'REQUEST', filename: 'invite.ics', content: ics };
+      }
+    }
+
+    return this.helperService.sendEmail(
+      template,
+      { name: 'Host' },
+      hostEmail,
+      subject,
+      undefined,
+      icalEvent,
+    );
   }
 
   private async dispatchCustomInvite(
     dto: SendCustomInviteDTO,
   ) {
-    const { meetingLink, participantName, subject, message } = dto;
+    const { meetingLink, participantName, subject, message, title } = dto;
 
     // Normalise + validate emails (drop blanks / non-emails / duplicates).
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const emails = Array.from(
-      new Set(
-        (dto.emails ?? [])
-          .map((e) => (e ?? '').trim().toLowerCase())
-          .filter((e) => emailRegex.test(e)),
-      ),
-    );
+    const clean = (list?: string[]) =>
+      Array.from(
+        new Set(
+          (list ?? [])
+            .map((e) => (e ?? '').trim().toLowerCase())
+            .filter((e) => emailRegex.test(e)),
+        ),
+      );
+
+    const emails = clean(dto.emails);
+    // CC recipients (exclude any that are already in the To list).
+    const cc = clean(dto.cc).filter((e) => !emails.includes(e));
 
     if (!meetingLink) {
       return {
@@ -377,48 +487,172 @@ export class PersonInfoController {
 
     const inviterName = participantName?.trim() || 'InfyMeet';
     const mailSubject =
-      subject?.trim() || `${inviterName} has invited you to a video meeting`;
+      subject?.trim() ||
+      (title?.trim()
+        ? `Invitation: ${title.trim()}`
+        : `${inviterName} has invited you to a video meeting`);
 
-    const resInputData: { type: string; isSuccess: any }[] = [];
+    const titleBlock = title?.trim()
+      ? `<p style="margin:0 0 8px"><strong>Meeting:</strong> ${title.trim()}</p>`
+      : '';
 
-    await Promise.all(
-      emails.map(async (email) => {
-        const template = `
-        <div dir="ltr">
-          <p>Hello,</p>
-          <p>
-            <strong>${inviterName}</strong> has invited you to join a video meeting on InfyMeet.
-          </p>
-          ${message?.trim() ? `<p>${message.trim()}</p>` : ''}
-          <p>
-            📍 Meeting Link:
-            <a href="${meetingLink}">Click here to join</a>
-          </p>
-          <p>
-            Regards<br>
-            ${inviterName}<br>
-            Infinity Assurance Solutions Pvt. Ltd.
-          </p>
-        </div>
-        `;
+    // Always show the scheduled meeting time when available (independent of
+    // when the email itself is sent). Format in IST for consistency.
+    const whenSource = dto.meetingTime || dto.scheduleAt;
+    let whenBlock = '';
+    if (whenSource) {
+      const when = new Date(whenSource);
+      if (!Number.isNaN(when.getTime())) {
+        const whenText = when.toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          weekday: 'short',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        });
+        whenBlock = `<p style="margin:0 0 8px"><strong>When:</strong> ${whenText} (IST)</p>`;
+      }
+    }
 
-        const emailRes = await this.helperService.sendEmail(
-          template,
-          { name: 'Guest' },
-          email,
-          mailSubject,
-        );
+    // Only render the inviter's custom message; the standard invite line below
+    // is the single source of the "you're invited" sentence (no duplication).
+    const messageBlock = message?.trim()
+      ? `<p style="margin:0 0 12px">${message.trim().replace(/\n/g, '<br>')}</p>`
+      : '';
 
-        resInputData.push({ type: email, isSuccess: emailRes });
-      }),
+    const template = `
+      <div dir="ltr">
+        <p>Hello,</p>
+        <p><strong>${inviterName}</strong> has invited you to a video meeting on InfyMeet.</p>
+        ${titleBlock}
+        ${whenBlock}
+        ${messageBlock}
+        <p>📍 Meeting Link: <a href="${meetingLink}">Click here to join</a></p>
+        <p>
+          Regards<br>
+          ${inviterName}<br>
+          Infinity Assurance Solutions Pvt. Ltd.
+        </p>
+      </div>
+    `;
+
+    // Build a calendar event (.ics) so Google / Apple / Outlook auto-add it.
+    let icalEvent:
+      | { method: string; filename: string; content: string }
+      | undefined;
+    if (whenSource) {
+      const start = new Date(whenSource);
+      if (!Number.isNaN(start.getTime())) {
+        const durationMinutes =
+          Number(dto.durationMinutes) > 0 ? Number(dto.durationMinutes) : 60;
+        const ics = this.buildMeetingIcs({
+          start,
+          durationMinutes,
+          summary: title?.trim() || `${inviterName} – Video meeting`,
+          description: `${message?.trim() ? message.trim() + '\\n\\n' : ''}Join: ${meetingLink}`,
+          location: meetingLink,
+          organizerName: inviterName,
+          organizerEmail: 'no-reply@infinityassurance.com',
+          attendees: [...emails, ...cc],
+        });
+        icalEvent = { method: 'REQUEST', filename: 'invite.ics', content: ics };
+      }
+    }
+
+    // Single email: all invitees in To, optional CC list (Google-Meet style).
+    const emailRes = await this.helperService.sendEmail(
+      template,
+      { name: 'Guest' },
+      emails.join(', '),
+      mailSubject,
+      cc.length > 0 ? cc.join(', ') : undefined,
+      icalEvent,
     );
 
     return {
       statusCode: 200,
       isSuccess: true,
-      message: 'Invite email sent successfully',
-      data: resInputData,
+      message: dto.scheduleAt
+        ? 'Meeting scheduled & invite email sent successfully'
+        : 'Invite email sent successfully',
+      data: [
+        { type: 'to', recipients: emails, isSuccess: emailRes },
+        ...(cc.length ? [{ type: 'cc', recipients: cc, isSuccess: emailRes }] : []),
+      ],
     };
+  }
+
+  /**
+   * Build a minimal but valid iCalendar (RFC 5545) event string.
+   * Used as a text/calendar (METHOD:REQUEST) part so Gmail, Apple Calendar
+   * and Outlook detect the invite and add it to the recipient's calendar.
+   */
+  private buildMeetingIcs(opts: {
+    start: Date;
+    durationMinutes: number;
+    summary: string;
+    description: string;
+    location: string;
+    organizerName: string;
+    organizerEmail: string;
+    attendees: string[];
+  }): string {
+    const toUtc = (d: Date) =>
+      d
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .replace(/\.\d{3}Z$/, 'Z');
+
+    // Escape per RFC 5545 (commas, semicolons, backslashes, newlines).
+    const esc = (s: string) =>
+      (s ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/;/g, '\\;')
+        .replace(/,/g, '\\,')
+        .replace(/\r?\n/g, '\\n');
+
+    const end = new Date(opts.start.getTime() + opts.durationMinutes * 60 * 1000);
+    const uid = `${randomUUID()}@infymeet`;
+
+    const attendeeLines = opts.attendees.map(
+      (email) =>
+        `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${email}:mailto:${email}`,
+    );
+
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//InfyMeet//Meeting Invite//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:REQUEST',
+      'BEGIN:VEVENT',
+      `UID:${uid}`,
+      `DTSTAMP:${toUtc(new Date())}`,
+      `DTSTART:${toUtc(opts.start)}`,
+      `DTEND:${toUtc(end)}`,
+      `SUMMARY:${esc(opts.summary)}`,
+      `DESCRIPTION:${esc(opts.description)}`,
+      `LOCATION:${esc(opts.location)}`,
+      `URL:${opts.location}`,
+      `ORGANIZER;CN=${esc(opts.organizerName)}:mailto:${opts.organizerEmail}`,
+      ...attendeeLines,
+      'STATUS:CONFIRMED',
+      'SEQUENCE:0',
+      'TRANSP:OPAQUE',
+      'BEGIN:VALARM',
+      'TRIGGER:-PT10M',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:Reminder',
+      'END:VALARM',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ];
+
+    // RFC 5545 requires CRLF line endings.
+    return lines.join('\r\n');
   }
 
   @Post('/test-whatsapp')

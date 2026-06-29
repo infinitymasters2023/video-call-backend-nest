@@ -15,6 +15,130 @@ export class SignalingGateway implements OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
+  // Waiting room: roomId -> (socketId -> requester info).
+  // Guests who "knock" sit here until an admin admits or denies them.
+  private waitingRooms = new Map<
+    string,
+    Map<string, { userName: string; mode: string }>
+  >();
+
+  /** Return the socket ids of all admins currently inside a room. */
+  private getAdminsInRoom(roomId: string): string[] {
+    const room = this.server.sockets.adapter.rooms.get(roomId);
+    if (!room) return [];
+    const admins: string[] = [];
+    for (const sid of room) {
+      const sock = this.server.sockets.sockets.get(sid);
+      if (sock && (sock as any).isAdmin) admins.push(sid);
+    }
+    return admins;
+  }
+
+  // =========================
+  // REQUEST TO JOIN (guest "knock" → waiting room)
+  // =========================
+  @SubscribeMessage('request-join')
+  handleRequestJoin(
+    @MessageBody()
+    data: { roomId: string; userName?: string; mode?: 'audio' | 'video' },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { roomId } = data;
+    if (!roomId) return;
+
+    const userName = data.userName || 'Guest';
+    const mode = data.mode || 'video';
+
+    // Keep metadata so disconnect cleanup + admit can find them later.
+    (client as any).roomId = roomId;
+    (client as any).userName = userName;
+    (client as any).mode = mode;
+    (client as any).isAdmin = false;
+    (client as any).waiting = true;
+
+    let pending = this.waitingRooms.get(roomId);
+    if (!pending) {
+      pending = new Map();
+      this.waitingRooms.set(roomId, pending);
+    }
+    pending.set(client.id, { userName, mode });
+
+    const admins = this.getAdminsInRoom(roomId);
+    const reqPayload = { socketId: client.id, userName, mode };
+    admins.forEach((sid) => this.server.to(sid).emit('join-request', reqPayload));
+
+    client.emit('join-waiting', {
+      roomId,
+      adminPresent: admins.length > 0,
+    });
+
+    console.log(
+      `🚪 ${userName} is knocking on ${roomId} | admins present: ${admins.length}`,
+    );
+  }
+
+  // =========================
+  // ADMIT USER (admin approves a knock)
+  // =========================
+  @SubscribeMessage('admit-user')
+  handleAdmitUser(
+    @MessageBody() data: { roomId?: string; targetId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    if (!(client as any).isAdmin) {
+      console.warn(`❌ Non-admin tried admit-user: ${(client as any).userName}`);
+      return;
+    }
+    const roomId = data?.roomId ?? (client as any).roomId;
+    const targetId = data?.targetId;
+    if (!roomId || !targetId) return;
+
+    const pending = this.waitingRooms.get(roomId);
+    if (pending) pending.delete(targetId);
+
+    // Tell the requester they're approved → they will now emit 'join-room'.
+    this.server.to(targetId).emit('join-approved', { roomId });
+
+    // Clear this knock from every other admin's pending list.
+    this.getAdminsInRoom(roomId).forEach((sid) => {
+      if (sid !== client.id) {
+        this.server.to(sid).emit('knock-resolved', { socketId: targetId });
+      }
+    });
+
+    console.log(`✅ Admin admitted ${targetId} into ${roomId}`);
+  }
+
+  // =========================
+  // DENY USER (admin rejects a knock)
+  // =========================
+  @SubscribeMessage('deny-user')
+  handleDenyUser(
+    @MessageBody() data: { roomId?: string; targetId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    if (!(client as any).isAdmin) {
+      console.warn(`❌ Non-admin tried deny-user: ${(client as any).userName}`);
+      return;
+    }
+    const roomId = data?.roomId ?? (client as any).roomId;
+    const targetId = data?.targetId;
+    if (!roomId || !targetId) return;
+
+    const pending = this.waitingRooms.get(roomId);
+    if (pending) pending.delete(targetId);
+
+    this.server.to(targetId).emit('join-denied', { roomId });
+
+    this.getAdminsInRoom(roomId).forEach((sid) => {
+      if (sid !== client.id) {
+        this.server.to(sid).emit('knock-resolved', { socketId: targetId });
+      }
+    });
+
+    console.log(`⛔ Admin denied ${targetId} for ${roomId}`);
+  }
+
   // =========================
   // JOIN ROOM
   // =========================
@@ -44,6 +168,21 @@ export class SignalingGateway implements OnGatewayDisconnect {
     (client as any).userName = userName;
     (client as any).isAdmin = !!isAdmin;
     (client as any).mode = mode || 'video';
+    (client as any).waiting = false;
+
+    // No longer waiting (in case they were in a waiting room).
+    const pendingForRoom = this.waitingRooms.get(roomId);
+    if (pendingForRoom) pendingForRoom.delete(client.id);
+
+    // An admin entering the room receives any knocks that arrived earlier.
+    if (isAdmin && pendingForRoom && pendingForRoom.size) {
+      const requests = [...pendingForRoom.entries()].map(([sid, info]) => ({
+        socketId: sid,
+        userName: info.userName,
+        mode: info.mode,
+      }));
+      client.emit('pending-knocks', { requests });
+    }
 
     console.log(`✅ ${userName} joined ${roomId} (${mode ?? 'video'}) | admin=${!!isAdmin}`);
 
@@ -427,6 +566,19 @@ export class SignalingGateway implements OnGatewayDisconnect {
   handleDisconnect(client: Socket) {
     const roomId = (client as any).roomId;
     const userName = (client as any).userName;
+
+    // If the user was still in the waiting room, drop their knock and let
+    // admins clear it from their pending list.
+    if (roomId && (client as any).waiting) {
+      const pending = this.waitingRooms.get(roomId);
+      if (pending) pending.delete(client.id);
+      this.getAdminsInRoom(roomId).forEach((sid) =>
+        this.server.to(sid).emit('knock-resolved', { socketId: client.id }),
+      );
+      console.log(`🚪 ${userName} left the waiting room of ${roomId}`);
+      return;
+    }
+
     if (roomId) {
       client.to(roomId).emit('user-left', {
         userName: userName || 'User',
