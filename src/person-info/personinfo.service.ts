@@ -191,12 +191,27 @@ export class PersonInfoService {
           'Video call request created successfully',
       };
     } catch (err) {
-      this.logger.error(
-        'Failed to create video call request',
-        err,
-      );
+      if (axios.isAxiosError(err)) {
+        const externalMessage =
+          (err.response?.data as { message?: string })?.message ||
+          err.message ||
+          'Video call request failed';
 
-      throw err;
+        this.logger.error(
+          `Failed to create video call request: ${externalMessage}`,
+          err.response?.data ?? err,
+        );
+
+        throw new BadRequestException({
+          status: false,
+          message: externalMessage,
+          externalStatus: err.response?.status,
+          externalData: err.response?.data,
+        });
+      }
+
+      this.logger.error('Failed to create video call request', err);
+      throw new InternalServerErrorException('Failed to create video call request');
     }
   }
 }

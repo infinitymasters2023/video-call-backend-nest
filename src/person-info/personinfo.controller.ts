@@ -4,7 +4,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { PersonInfoService } from './personinfo.service';
-import { GetServiceCallDTO, SendMeetingDTO, TestWhatsappDto } from './personinfo.dtos';
+import { GetServiceCallDTO, SendCustomInviteDTO, SendMeetingDTO, TestWhatsappDto } from './personinfo.dtos';
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
 import { MeetingSchedulerService } from './meeting-scheduler.service';
@@ -298,6 +298,129 @@ export class PersonInfoController {
       data: resInputData,
     };
   }
+  // =========================
+  // CUSTOM EMAIL INVITE (no ticket / claim required)
+  // =========================
+  @Post('/send_custom_invite')
+  async sendCustomInvite(
+    @Body() dto: SendCustomInviteDTO,
+  ) {
+    if (dto.scheduleAt) {
+      const runAt = new Date(dto.scheduleAt);
+
+      if (Number.isNaN(runAt.getTime())) {
+        return {
+          statusCode: 400,
+          isSuccess: false,
+          message: 'Invalid scheduleAt datetime',
+          data: null,
+        };
+      }
+
+      if (runAt.getTime() <= Date.now()) {
+        return {
+          statusCode: 400,
+          isSuccess: false,
+          message: 'scheduleAt must be a future datetime',
+          data: null,
+        };
+      }
+
+      const scheduled = this.meetingSchedulerService.scheduleMeeting(
+        runAt,
+        async () => this.dispatchCustomInvite(dto),
+      );
+
+      return {
+        statusCode: 202,
+        isSuccess: true,
+        message: 'Invite email scheduled successfully',
+        data: scheduled,
+      };
+    }
+
+    return this.dispatchCustomInvite(dto);
+  }
+
+  private async dispatchCustomInvite(
+    dto: SendCustomInviteDTO,
+  ) {
+    const { meetingLink, participantName, subject, message } = dto;
+
+    // Normalise + validate emails (drop blanks / non-emails / duplicates).
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emails = Array.from(
+      new Set(
+        (dto.emails ?? [])
+          .map((e) => (e ?? '').trim().toLowerCase())
+          .filter((e) => emailRegex.test(e)),
+      ),
+    );
+
+    if (!meetingLink) {
+      return {
+        statusCode: 400,
+        isSuccess: false,
+        message: 'meetingLink is required',
+        data: null,
+      };
+    }
+
+    if (emails.length === 0) {
+      return {
+        statusCode: 400,
+        isSuccess: false,
+        message: 'At least one valid email is required',
+        data: null,
+      };
+    }
+
+    const inviterName = participantName?.trim() || 'InfyMeet';
+    const mailSubject =
+      subject?.trim() || `${inviterName} has invited you to a video meeting`;
+
+    const resInputData: { type: string; isSuccess: any }[] = [];
+
+    await Promise.all(
+      emails.map(async (email) => {
+        const template = `
+        <div dir="ltr">
+          <p>Hello,</p>
+          <p>
+            <strong>${inviterName}</strong> has invited you to join a video meeting on InfyMeet.
+          </p>
+          ${message?.trim() ? `<p>${message.trim()}</p>` : ''}
+          <p>
+            📍 Meeting Link:
+            <a href="${meetingLink}">Click here to join</a>
+          </p>
+          <p>
+            Regards<br>
+            ${inviterName}<br>
+            Infinity Assurance Solutions Pvt. Ltd.
+          </p>
+        </div>
+        `;
+
+        const emailRes = await this.helperService.sendEmail(
+          template,
+          { name: 'Guest' },
+          email,
+          mailSubject,
+        );
+
+        resInputData.push({ type: email, isSuccess: emailRes });
+      }),
+    );
+
+    return {
+      statusCode: 200,
+      isSuccess: true,
+      message: 'Invite email sent successfully',
+      data: resInputData,
+    };
+  }
+
   @Post('/test-whatsapp')
   async testWhatsapp(
     @Body() body: TestWhatsappDto,

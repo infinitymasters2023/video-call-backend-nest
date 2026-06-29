@@ -172,6 +172,21 @@ export class SignalingGateway implements OnGatewayDisconnect {
   }
 
   // =========================
+  // CAMERA TOGGLE (relay on/off so peers can spotlight the active camera)
+  // =========================
+  @SubscribeMessage('toggle-cam')
+  handleCamToggle(
+    @MessageBody() data: any,
+    @ConnectedSocket() client: Socket,
+  ) {
+    client.to(data.roomId).emit('toggle-cam', {
+      ...data,
+      peerId: client.id,
+      socketId: client.id,
+    });
+  }
+
+  // =========================
   // MUTE REQUEST (admin)
   // =========================
   @SubscribeMessage('mute-request')

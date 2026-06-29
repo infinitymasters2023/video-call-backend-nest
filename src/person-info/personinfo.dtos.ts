@@ -49,6 +49,42 @@ export class SendMeetingDTO {
   scheduleAt?: string;
 }
 
+export class SendCustomInviteDTO {
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  meetingLink: string;
+
+  @ApiProperty({ type: [String], description: 'Email addresses to invite' })
+  @IsNotEmpty()
+  emails: string[];
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  participantName?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  subject?: string;
+
+  @ApiProperty({ required: false, description: 'Optional custom message body' })
+  @IsOptional()
+  @IsString()
+  message?: string;
+
+  @ApiProperty({
+    required: false,
+    example: '2026-06-22T13:30:00.000Z',
+    description: 'If provided, the invite email is scheduled for this datetime',
+  })
+  @IsOptional()
+  @IsISO8601()
+  scheduleAt?: string;
+}
+
 export class TestWhatsappDto {
   @ApiProperty({
     example: '9876543210',
