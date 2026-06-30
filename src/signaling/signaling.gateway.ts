@@ -94,7 +94,15 @@ export class SignalingGateway implements OnGatewayDisconnect {
     if (!roomId || !targetId) return;
 
     const pending = this.waitingRooms.get(roomId);
+    const wasPending = !!pending && pending.has(targetId);
     if (pending) pending.delete(targetId);
+
+    // Idempotent: if this knock was already resolved, don't approve again
+    // (prevents a second join-approved → duplicate connection).
+    if (!wasPending) {
+      console.log(`ℹ️ admit-user for ${targetId} ignored (already resolved)`);
+      return;
+    }
 
     // Tell the requester they're approved → they will now emit 'join-room'.
     this.server.to(targetId).emit('join-approved', { roomId });
@@ -156,7 +164,13 @@ export class SignalingGateway implements OnGatewayDisconnect {
     const { roomId, userName, isAdmin, mode } = data;
 
     const existingRoom = this.server.sockets.adapter.rooms.get(roomId);
-    if (existingRoom && existingRoom.size >= 12) {
+
+    // Was this exact socket already a member of this room? If so, a repeated
+    // join-room (e.g. double admit) must NOT re-broadcast user-joined, or the
+    // other side would build a second, conflicting peer connection.
+    const alreadyInRoom = !!existingRoom && existingRoom.has(client.id);
+
+    if (!alreadyInRoom && existingRoom && existingRoom.size >= 12) {
       console.warn(`❌ Room ${roomId} is full (12 users max). ${userName} rejected.`);
       client.emit('room-full');
       return;
@@ -205,13 +219,17 @@ export class SignalingGateway implements OnGatewayDisconnect {
       }
     }
 
-    client.to(roomId).emit('user-joined', {
-      socketId: client.id,
-      peerId: client.id,
-      userName,
-      isAdmin,
-      mode,
-    });
+    if (!alreadyInRoom) {
+      client.to(roomId).emit('user-joined', {
+        socketId: client.id,
+        peerId: client.id,
+        userName,
+        isAdmin,
+        mode,
+      });
+    } else {
+      console.log(`↩️ ${userName} re-joined ${roomId} (suppressed duplicate user-joined)`);
+    }
 
     const room = this.server.sockets.adapter.rooms.get(roomId);
     if (room && room.size >= 2) {
