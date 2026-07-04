@@ -17,14 +17,14 @@ import { loginotpservice } from './otp.service';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const expires = config.get<string>('ACCESS_TOKEN_EXPIRED') || '24d';
+        const expires = config.get<string>('ACCESS_TOKEN_EXPIRED') || '1h';
         return {
           secret:
             config.get<string>('JWT_SECRET') ||
             config.get<string>('ACCESS_TOKEN_SECRET_KEY') ||
             'change-me',
           signOptions: {
-            expiresIn: expires as `${number}d`,
+            expiresIn: expires as `${number}${'h' | 'd' | 'm' | 's'}`,
           },
         };
       },

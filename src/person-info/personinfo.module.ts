@@ -6,9 +6,10 @@ import { PersonInfoController } from './personinfo.controller';
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
 import { MeetingSchedulerService } from './meeting-scheduler.service';
+import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
-  imports: [HttpModule],
+  imports: [HttpModule, AuthModule],
   controllers: [PersonInfoController],
   providers: [
     PersonInfoService,

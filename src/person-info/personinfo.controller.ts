@@ -1,4 +1,4 @@
-import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param, Query, Headers } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
 import {
@@ -9,6 +9,7 @@ import { GetServiceCallDTO, SendCustomInviteDTO, SendMeetingDTO, TestWhatsappDto
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
 import { MeetingSchedulerService } from './meeting-scheduler.service';
+import { AuthService } from 'src/auth/auth.service';
 
 
 
@@ -20,6 +21,7 @@ export class PersonInfoController {
     private readonly helperService: HelperService,
     private readonly whatsappService: WhatsappService,
     private readonly meetingSchedulerService: MeetingSchedulerService,
+    private readonly authService: AuthService,
   ) { }
 
 
@@ -729,5 +731,37 @@ export class PersonInfoController {
     return this.personInfoService.createVideoCall(
       payload,
     );
+  }
+  @Get('user')
+  async getUserByEmailOrMobile(
+    @Query('email') email?: string,
+    @Query('mobile') mobile?: string,
+    @Headers('authorization') authorization?: string,
+  ) {
+    let resolvedEmail = email?.trim() || undefined
+    let resolvedMobile = mobile?.trim() || undefined
+
+    if (!resolvedEmail && !resolvedMobile && authorization?.startsWith('Bearer ')) {
+      try {
+        const payload = await this.authService.verifyToken(authorization.slice(7).trim())
+        const p = payload as Record<string, unknown>
+        resolvedEmail =
+          (typeof p.email === 'string' && p.email) ||
+          (typeof p.Email === 'string' && p.Email) ||
+          undefined
+        resolvedMobile =
+          (typeof p.mobile === 'string' && p.mobile) ||
+          (typeof p.Mobile === 'string' && p.Mobile) ||
+          undefined
+      } catch {
+        return {
+          status: false,
+          data: [],
+          message: 'Invalid or expired token.',
+        }
+      }
+    }
+
+    return this.personInfoService.getUserByEmailOrMobile(resolvedEmail, resolvedMobile);
   }
 }

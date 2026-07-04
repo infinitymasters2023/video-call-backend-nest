@@ -214,4 +214,34 @@ export class PersonInfoService {
       throw new InternalServerErrorException('Failed to create video call request');
     }
   }
+
+  async getUserByEmailOrMobile(email?: string, mobile?: string) {
+    try {
+      if (!email && !mobile) {
+        return {
+          status: false,
+          data: [],
+          message: 'Either email or mobile is required.',
+        };
+      }
+
+      const result = await this.db.runStoredProcedure(
+        'sp_infymeet',
+        {
+          type: 10,
+          Email: email || null,
+          Mobile: mobile || null,
+        },
+      );
+
+      return {
+        status: true,
+        data: result?.recordsets?.[0] || [],
+        message: 'User fetched successfully',
+      };
+    } catch (err) {
+      this.logger.error('Failed to fetch user', err);
+      throw err;
+    }
+  }
 }
