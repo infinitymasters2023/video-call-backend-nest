@@ -9,7 +9,14 @@ import {
 import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({
-  cors: { origin: '*' },
+  path: '/socket.io',
+  cors: {
+    origin: true,
+    credentials: true,
+  },
+  transports: ['websocket', 'polling'],
+  // IIS/ARR often breaks permessage-deflate on the WebSocket upgrade.
+  perMessageDeflate: false,
 })
 export class SignalingGateway implements OnGatewayDisconnect {
   @WebSocketServer()
@@ -428,7 +435,9 @@ export class SignalingGateway implements OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     client.to(data.roomId).emit('hand-raised', {
-      userName: (client as any).userName,
+      userName: data?.userName || (client as any).userName || 'Peer',
+      raised: !!data?.raised,
+      socketId: client.id,
     });
   }
 
