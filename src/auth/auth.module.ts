@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { DatabaseModule } from 'src/database/database.module';
 import { HelperService } from 'src/helper/helper.service';
 import { loginotpservice } from './otp.service';
+import { UsersRepository } from './users.repository';
 
 @Module({
   imports: [
@@ -31,7 +32,7 @@ import { loginotpservice } from './otp.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, HelperService, loginotpservice],
-  exports: [AuthService, JwtModule],
+  providers: [AuthService, HelperService, loginotpservice, UsersRepository],
+  exports: [AuthService, UsersRepository, JwtModule],
 })
 export class AuthModule {}

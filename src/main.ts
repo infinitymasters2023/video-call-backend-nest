@@ -20,10 +20,10 @@ async function bootstrap() {
     ? undefined
     : {
         key: fs.readFileSync(
-          'D:/yash/tempdata/infymeet-nextjs/infymeet/certificates/localhost-key.pem',
+          'D:/infymeet/infymeet_new/certificates/localhost-key.pem',
         ),
         cert: fs.readFileSync(
-          'D:/yash/tempdata/infymeet-nextjs/infymeet/certificates/localhost.pem',
+          'D:/infymeet/infymeet_new/certificates/localhost.pem',
         ),
       };
 
