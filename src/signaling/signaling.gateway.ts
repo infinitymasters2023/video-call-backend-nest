@@ -350,6 +350,19 @@ export class SignalingGateway implements OnGatewayDisconnect {
     });
   }
 
+  @SubscribeMessage('screen-share')
+  handleScreenShare(
+    @MessageBody() data: { roomId?: string; sharing?: boolean },
+    @ConnectedSocket() client: Socket,
+  ) {
+    if (!data?.roomId) return;
+    client.to(data.roomId).emit('screen-share', {
+      sharing: !!data.sharing,
+      peerId: client.id,
+      socketId: client.id,
+    });
+  }
+
   // =========================
   // MUTE REQUEST (admin)
   // =========================
@@ -439,6 +452,71 @@ export class SignalingGateway implements OnGatewayDisconnect {
       raised: !!data?.raised,
       socketId: client.id,
     });
+  }
+
+  // =========================
+  // REACTION (emoji broadcast to the room)
+  // =========================
+  /**
+   * Pure relay, same shape as hand-raised. The sender already renders their own
+   * emoji locally, so this only goes to everyone else. The payload is clamped
+   * here so one client cannot push a large string into every other client.
+   */
+  @SubscribeMessage('reaction')
+  handleReaction(
+    @MessageBody() data: { roomId?: string; emoji?: string; userName?: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const roomId = data?.roomId ?? (client as any).roomId;
+    if (!roomId) return;
+    const emoji = typeof data?.emoji === 'string' ? data.emoji.slice(0, 8) : '';
+    if (!emoji) return;
+
+    client.to(roomId).emit('reaction', {
+      emoji,
+      userName: data?.userName || (client as any).userName || 'Someone',
+      socketId: client.id,
+    });
+  }
+
+  // =========================
+  // HOST POLICY (moderation rules)
+  // =========================
+  /**
+   * Broadcast the host's moderation rules to everyone else in the room.
+   * Only an admin socket may set them — clients enforce the rules locally,
+   * so letting a guest emit this would let them mute the room.
+   */
+  @SubscribeMessage('host-policy')
+  handleHostPolicy(
+    @MessageBody() data: { roomId?: string; policy?: Record<string, boolean> },
+    @ConnectedSocket() client: Socket,
+  ) {
+    if (!(client as any).isAdmin) {
+      console.warn(
+        `❌ Non-admin tried host-policy: ${(client as any).userName}`,
+      );
+      return;
+    }
+    const roomId = data?.roomId ?? (client as any).roomId;
+    if (!roomId || !data?.policy) return;
+
+    const allowed = [
+      'muteLocked',
+      'muteOnEntry',
+      'chatLocked',
+      'reactionsLocked',
+      'shareLocked',
+      'roomLocked',
+    ];
+    const policy: Record<string, boolean> = {};
+    for (const key of allowed) policy[key] = !!data.policy[key];
+
+    // Remembered on the room's admin socket so the host can restate the rules
+    // whenever somebody new arrives.
+    (client as any).hostPolicy = policy;
+    client.to(roomId).emit('host-policy', { policy, socketId: client.id });
+    console.log(`🛡️ Host policy updated in ${roomId}`, policy);
   }
 
   // =========================
