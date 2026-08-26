@@ -428,7 +428,9 @@ export class SignalingGateway implements OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     client.to(data.roomId).emit('hand-raised', {
-      userName: (client as any).userName,
+      userName: data?.userName || (client as any).userName || 'Peer',
+      raised: !!data?.raised,
+      socketId: client.id,
     });
   }
 
