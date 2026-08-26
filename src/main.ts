@@ -124,7 +124,8 @@ async function bootstrap() {
     document,
   );
 
-  await app.listen(5083, '0.0.0.0');
+  const port = Number(process.env.PORT) || 5083;
+  await app.listen(port, '0.0.0.0');
 }
 
 bootstrap();
