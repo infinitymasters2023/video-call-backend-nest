@@ -14,7 +14,7 @@ import * as express from 'express';
 
 async function bootstrap() {
   const isProduction =
-    (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    (process.env.NODE_ENV || 'production').toLowerCase() === 'production';
 
   const httpsOptions = isProduction
     ? undefined
