@@ -9,7 +9,14 @@ import {
 import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({
-  cors: { origin: '*' },
+  path: '/socket.io',
+  cors: {
+    origin: true,
+    credentials: true,
+  },
+  transports: ['websocket', 'polling'],
+  // IIS/ARR often breaks permessage-deflate on the WebSocket upgrade.
+  perMessageDeflate: false,
 })
 export class SignalingGateway implements OnGatewayDisconnect {
   @WebSocketServer()
