@@ -7,9 +7,12 @@ import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
 import { MeetingSchedulerService } from './meeting-scheduler.service';
 import { AuthModule } from 'src/auth/auth.module';
+import { MeetingModule } from 'src/meeting/meeting.module';
 
 @Module({
-  imports: [HttpModule, AuthModule],
+  // MeetingModule brings the meeting + scheduled-job repositories, so invites
+  // and their calendar sequence numbers are written against real rows.
+  imports: [HttpModule, AuthModule, MeetingModule],
   controllers: [PersonInfoController],
   providers: [
     PersonInfoService,

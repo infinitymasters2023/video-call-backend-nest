@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param , Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { MeetingService } from './meeting.service';
 import { CreateMeetingDto } from './meeting.dto';
@@ -12,8 +12,12 @@ export class MeetingController {
 
   @Post('create')
   @ApiOperation({ summary: 'Create a meeting' })
-  createMeeting(@Body() body: CreateMeetingDto) {
-    return this.meetingService.createMeeting(body);
+  createMeeting(
+    @Body() body: CreateMeetingDto,
+    @Headers('authorization') authorization?: string,
+  ) {
+    // The token is optional: agent-portal meetings legitimately have none.
+    return this.meetingService.createMeeting(body, authorization);
   }
 
   @Get(':roomId')
