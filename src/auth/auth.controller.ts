@@ -1,10 +1,22 @@
-import { Body, Controller, Get, Headers, Post, Query, Res } from '@nestjs/common';
-import type { Response } from 'express';
+import { Body, Controller, Get, Headers, Post, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
-import { GoogleLoginDto, LoginDto, logininfoDTO, SendOTPEmailMessageDto } from './auth.dtos';
+import {
+  AvailabilityDto,
+  CompleteProfileDto,
+  ContactCodeDto,
+  ForgotPasswordDto,
+  GoogleLoginDto,
+  LoginDto,
+  logininfoDTO,
+  ResetPasswordDto,
+  SendOTPEmailMessageDto,
+} from './auth.dtos';
 import { HelperService } from 'src/helper/helper.service';
 import { loginotpservice } from './otp.service';
+import { SubscriptionService } from './subscription.service';
+import { buildOtpSms, OTP_TEMPLATE_ID } from 'src/helper/sms-templates';
 interface ApiResponse {
   statusCode: number;
   isSuccess: boolean;
@@ -18,18 +30,31 @@ export class AuthController {
     private readonly config: ConfigService,
     private helperService: HelperService,
     private loginotpservice: loginotpservice,
+    private readonly subscriptions: SubscriptionService,
   ) { }
 
+  /** The origin the browser actually reached this API on, e.g. https://localhost:5083 */
+  private originOf(req: Request): string {
+    const proto = req.secure ? 'https' : req.protocol || 'http';
+    return `${proto}://${req.get('host')}`;
+  }
+
   @Get('google/config')
-  getGoogleConfig() {
-    return this.authService.getPublicGoogleConfig();
+  getGoogleConfig(@Req() req: Request) {
+    return this.authService.getPublicGoogleConfig(this.originOf(req));
   }
 
   @Get('google')
-  googleAuth(@Query('next') next: string, @Res() res: Response) {
+  googleAuth(
+    @Query('next') next: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
     // `next` rides along in OAuth state so a shared meeting link survives the
     // detour through Google and the user lands back where they started.
-    return res.redirect(this.authService.getGoogleAuthUrl(next));
+    return res.redirect(
+      this.authService.getGoogleAuthUrl(next, this.originOf(req)),
+    );
   }
 
   @Get('google/callback')
@@ -37,20 +62,24 @@ export class AuthController {
     @Query('code') code: string,
     @Query('error') error: string,
     @Query('state') state: string,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
     const frontend = (this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000').replace(
       /\/$/,
       '',
     );
-    const next = this.authService.decodeOAuthState(state);
+    const { next, redirectUri } = this.authService.decodeOAuthState(state);
 
     if (error || !code) {
       return res.redirect(`${frontend}/login/?error=google_auth_failed`);
     }
 
     try {
-      const { access_token, user } = await this.authService.loginWithGoogleCode(code);
+      const { access_token, user } = await this.authService.loginWithGoogleCode(
+        code,
+        redirectUri || `${this.originOf(req)}/auth/google/callback`,
+      );
       const params = new URLSearchParams({ token: access_token });
       if (user.email) params.set('email', user.email);
       if (user.name) params.set('name', user.name);
@@ -89,6 +118,176 @@ export class AuthController {
     };
   }
 
+  /** Is this email / mobile free to register? Drives the form's live feedback. */
+  @Post('check-availability')
+  async checkAvailability(@Body() dto: AvailabilityDto): Promise<ApiResponse> {
+    const result = await this.authService.checkAvailability(
+      dto.email ?? '',
+      dto.mobile ?? '',
+    );
+    return {
+      statusCode: 200,
+      isSuccess: result.isSuccess,
+      message: result.message,
+      data: result.data,
+    };
+  }
+
+  /**
+   * Send a signup verification code to one channel.
+   *
+   * Signup needs both an email and a mobile proven, so this is called once per
+   * channel and each is verified independently.
+   */
+  @Post('signup/send-code')
+  async sendContactCode(@Body() dto: ContactCodeDto): Promise<ApiResponse> {
+    const channel = dto.channel === 'email' ? 'email' : 'mobile';
+    const result = await this.authService.sendContactCode(
+      channel,
+      dto.email ?? '',
+      dto.mobile ?? '',
+    );
+    return {
+      statusCode: result.isSuccess ? 200 : 400,
+      isSuccess: result.isSuccess,
+      message: result.message,
+      data: result.data,
+    };
+  }
+
+  /** Check one channel's code and mark that contact proven. */
+  @Post('signup/verify-code')
+  verifyContactCode(@Body() dto: ContactCodeDto): ApiResponse {
+    const channel = dto.channel === 'email' ? 'email' : 'mobile';
+    const result = this.authService.verifyContactCode(
+      channel,
+      dto.email ?? '',
+      dto.mobile ?? '',
+      dto.code ?? '',
+    );
+    return {
+      statusCode: result.isSuccess ? 200 : 400,
+      isSuccess: result.isSuccess,
+      message: result.message,
+      data: result.data,
+    };
+  }
+
+  /**
+   * Step one of a password reset: text a code to the number on the account.
+   *
+   * The destination is never taken from the request — only the email is — so a
+   * reset code always goes to the phone already registered for that account.
+   */
+  @Post('forgot-password')
+  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<ApiResponse> {
+    const result = await this.authService.requestPasswordReset(dto.email ?? '');
+    return {
+      statusCode: result.isSuccess ? 200 : 400,
+      isSuccess: result.isSuccess,
+      message: result.message,
+      data: result.data,
+    };
+  }
+
+  /** Step two: verify the code and store the new password. */
+  @Post('reset-password')
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<ApiResponse> {
+    const result = await this.authService.resetPassword(
+      dto.email ?? '',
+      dto.otp ?? '',
+      dto.newPassword ?? '',
+    );
+    return {
+      statusCode: result.isSuccess ? 200 : 400,
+      isSuccess: result.isSuccess,
+      message: result.message,
+      data: result.data,
+    };
+  }
+
+  /**
+   * Finish a Google sign-up by attaching a verified mobile number.
+   *
+   * Google hands us a name and an email; this collects the one detail it cannot
+   * and marks the account complete, so the same email walks straight in next
+   * time. Requires the bearer token issued by the Google callback.
+   */
+  @Post('complete-profile')
+  async completeProfile(
+    @Body() dto: CompleteProfileDto,
+    @Headers('authorization') authorization?: string,
+  ): Promise<ApiResponse> {
+    const token = (authorization ?? '').replace(/^Bearer\s+/i, '').trim();
+    const record = token ? await this.authService.resolveToken(token) : null;
+
+    if (!record) {
+      return { statusCode: 401, isSuccess: false, message: 'Not signed in', data: null };
+    }
+
+    const mobile = String(dto.mobile ?? '').replace(/\D/g, '').slice(-10);
+    if (mobile.length !== 10) {
+      return {
+        statusCode: 400,
+        isSuccess: false,
+        message: 'Please enter a valid 10-digit mobile number.',
+        data: null,
+      };
+    }
+
+    const gate = this.consumeSignupOtp(mobile, dto.otp);
+    if (gate) return gate;
+
+    const session = await this.authService.completeProfile(Number(record.UserID), mobile);
+    if (!session) {
+      return {
+        statusCode: 500,
+        isSuccess: false,
+        message: 'Could not save your mobile number. Please try again.',
+        data: null,
+      };
+    }
+
+    return {
+      statusCode: 200,
+      isSuccess: true,
+      message: 'Profile completed',
+      data: {
+        ...this.authService.publicUser(session.record),
+        accessToken: session.access_token,
+      },
+    };
+  }
+
+  /**
+   * The signed-in user plus their plan and meeting quota.
+   *
+   * Backs the profile page. Usage counts are not live yet — the response says
+   * so via `usage.usageTracked` so the page can be honest about it.
+   */
+  @Get('profile')
+  async profile(@Headers('authorization') authorization?: string): Promise<ApiResponse> {
+    const token = (authorization ?? '').replace(/^Bearer\s+/i, '').trim();
+    const record = token ? await this.authService.resolveToken(token) : null;
+
+    if (!record) {
+      return { statusCode: 401, isSuccess: false, message: 'Not signed in', data: null };
+    }
+
+    const usage = await this.subscriptions.getUsage(Number(record.UserID));
+
+    return {
+      statusCode: 200,
+      isSuccess: true,
+      message: 'OK',
+      data: {
+        user: this.authService.publicUser(record),
+        usage,
+        plans: this.subscriptions.listPlans(),
+      },
+    };
+  }
+
   /** Who the bearer token belongs to. The frontend guard calls this on load. */
   @Get('me')
   async me(@Headers('authorization') authorization?: string): Promise<ApiResponse> {
@@ -121,11 +320,9 @@ export class AuthController {
    */
   @Post('google-login')
   async googleLogin(@Body() dto: GoogleLoginDto): Promise<ApiResponse> {
-    if (!dto.googleId) {
-      const gate = this.consumeSignupOtp(dto.mobile, dto.otp);
-      if (gate) return gate;
-    }
-
+    // The single mobile OTP that used to gate this is gone: createAccount now
+    // requires BOTH the email and the mobile to have been separately verified
+    // through /auth/signup/verify-code, which is a strictly stronger check.
     const result = await this.authService.createAccount(dto);
     return {
       statusCode: result.isSuccess ? 200 : 400,
@@ -182,8 +379,13 @@ export class AuthController {
     console.log('value genrate ', otp)
     this.loginotpservice.storeOtp(mobile, otpStr, expiresAt);
 
-    const message = `Welcome to Infinity, Your OTP to Login to Infinity TechCare Lounge is ${lastSixDigits}. For Help, Call Infinity 8447882424. 9AM-6PM Mon-Sat`;
-    await this.helperService.sendSms(mobile, message, '1107162426891569578');
+    // Same wording as before, now from the shared builder so the body and the
+    // DLT template id can never drift apart.
+    await this.helperService.sendSms(
+      mobile,
+      buildOtpSms(lastSixDigits),
+      OTP_TEMPLATE_ID,
+    );
 
     return {
       statusCode: 200,

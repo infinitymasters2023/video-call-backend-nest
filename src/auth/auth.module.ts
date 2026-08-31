@@ -8,6 +8,10 @@ import { DatabaseModule } from 'src/database/database.module';
 import { HelperService } from 'src/helper/helper.service';
 import { loginotpservice } from './otp.service';
 import { UsersRepository } from './users.repository';
+import { PasswordResetService } from './password-reset.service';
+import { ContactVerificationService } from './contact-verification.service';
+import { SubscriptionService } from './subscription.service';
+import { MeetingsRepository } from 'src/meeting/meetings.repository';
 
 @Module({
   imports: [
@@ -32,7 +36,16 @@ import { UsersRepository } from './users.repository';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, HelperService, loginotpservice, UsersRepository],
+  providers: [
+    AuthService,
+    HelperService,
+    loginotpservice,
+    UsersRepository,
+    PasswordResetService,
+    ContactVerificationService,
+    SubscriptionService,
+    MeetingsRepository,
+  ],
   exports: [AuthService, UsersRepository, JwtModule],
 })
 export class AuthModule {}

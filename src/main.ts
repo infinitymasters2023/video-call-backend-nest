@@ -126,6 +126,26 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT) || 5083;
   await app.listen(port, '0.0.0.0');
+
+  // The server speaks https here whenever local certs are loaded. If the OAuth
+  // callback is configured for the other protocol, Google sends the user back
+  // to a port that cannot answer and the sign-in dies silently after consent —
+  // so say so loudly at boot instead.
+  const servedProtocol = httpsOptions ? 'https' : 'http';
+  const callback = process.env.GOOGLE_CALLBACK_URL || '';
+  if (callback && !callback.startsWith(`${servedProtocol}://`)) {
+    console.warn(
+      `
+⚠  GOOGLE_CALLBACK_URL is "${callback}" but this server is serving ` +
+      `${servedProtocol}. Google sign-in will fail after the consent screen.
+` +
+      `   Set it to ${servedProtocol}://localhost:${port}/auth/google/callback ` +
+      `and register that exact URL in the Google Cloud console.
+`,
+    );
+  }
+
+  console.log(`🚀 API listening on ${servedProtocol}://localhost:${port}`);
 }
 
 bootstrap();

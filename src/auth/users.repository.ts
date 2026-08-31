@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'crypto';
 import { DatabaseService } from 'src/database/database.service';
+import { mobileKey } from './contact.policy';
 
 /** A row of dbo.infymeet_users as the rest of the app consumes it. */
 export interface InfymeetUser {
@@ -81,15 +82,61 @@ export class UsersRepository {
     return rows[0] ?? null;
   }
 
+  /**
+   * Find an account by mobile, comparing only the last ten digits.
+   *
+   * Rows written before the country selector existed hold a bare national
+   * number while new ones carry the country code, and the OTP store already
+   * keys on the last ten — matching on that makes every format resolve to the
+   * same account instead of silently missing.
+   */
   async findByMobile(mobile: string): Promise<InfymeetUser | null> {
+    const key = mobileKey(mobile);
+    if (!key) return null;
+
     const rows = await this.db.query<InfymeetUser>(
       `SELECT TOP 1 ${USER_COLUMNS}
        FROM dbo.infymeet_users
-       WHERE Mobile = CAST(@Mobile AS NVARCHAR(20)) AND ISNULL(IsDeleted, 0) = 0
+       WHERE ISNULL(IsDeleted, 0) = 0
+         AND Mobile IS NOT NULL
+         AND RIGHT(REPLACE(REPLACE(Mobile, '+', ''), ' ', ''), 10)
+             = CAST(@MobileKey AS NVARCHAR(10))
        ORDER BY UserID DESC`,
-      { Mobile: mobile },
+      { MobileKey: key },
     );
     return rows[0] ?? null;
+  }
+
+  /**
+   * Which of these two contacts already belong to an account.
+   *
+   * Both are checked because either one being taken blocks the signup — an
+   * email and a phone number may each front exactly one account.
+   */
+  async findConflicts(
+    email: string,
+    mobile: string,
+  ): Promise<{ emailTaken: boolean; mobileTaken: boolean }> {
+    const key = mobileKey(mobile);
+
+    const rows = await this.db.query<{ EmailTaken: number; MobileTaken: number }>(
+      `SELECT
+         MAX(CASE WHEN @Email <> '' AND Email = CAST(@Email AS NVARCHAR(200))
+                  THEN 1 ELSE 0 END) AS EmailTaken,
+         MAX(CASE WHEN @MobileKey <> '' AND Mobile IS NOT NULL
+                   AND RIGHT(REPLACE(REPLACE(Mobile, '+', ''), ' ', ''), 10)
+                       = CAST(@MobileKey AS NVARCHAR(10))
+                  THEN 1 ELSE 0 END) AS MobileTaken
+       FROM dbo.infymeet_users
+       WHERE ISNULL(IsDeleted, 0) = 0`,
+      { Email: (email ?? '').trim(), MobileKey: key },
+    );
+
+    const row = rows[0];
+    return {
+      emailTaken: Number(row?.EmailTaken ?? 0) === 1,
+      mobileTaken: Number(row?.MobileTaken ?? 0) === 1,
+    };
   }
 
   async findById(userId: number): Promise<InfymeetUser | null> {
@@ -195,7 +242,15 @@ export class UsersRepository {
       `
       IF EXISTS (
         SELECT 1 FROM dbo.infymeet_users
-        WHERE Email = CAST(@Email AS NVARCHAR(200)) AND ISNULL(IsDeleted, 0) = 0
+        WHERE ISNULL(IsDeleted, 0) = 0
+          AND (
+            Email = CAST(@Email AS NVARCHAR(200))
+            OR (
+              @MobileKey <> '' AND Mobile IS NOT NULL
+              AND RIGHT(REPLACE(REPLACE(Mobile, '+', ''), ' ', ''), 10)
+                  = CAST(@MobileKey AS NVARCHAR(10))
+            )
+          )
       )
       BEGIN
         SELECT TOP 0 ${USER_COLUMNS} FROM dbo.infymeet_users;
@@ -217,6 +272,7 @@ export class UsersRepository {
         FullName: input.fullName,
         Email: input.email,
         Mobile: input.mobile ?? null,
+        MobileKey: mobileKey(input.mobile ?? ''),
         PasswordHash: this.hashPassword(input.password),
       },
     );
@@ -243,6 +299,80 @@ export class UsersRepository {
 
     await this.touchLogin(creds.UserID);
     return this.findById(creds.UserID);
+  }
+
+  /**
+   * What a reset request needs to know: where to send the code, and whether
+   * this account has a password to reset at all.
+   *
+   * Uses no columns beyond the ones already in dbo.infymeet_users — a reset
+   * code lives in memory for ten minutes, so there is no token table to add.
+   */
+  async findResetTarget(email: string): Promise<{
+    userId: number;
+    mobile: string | null;
+    fullName: string | null;
+    authProvider: string | null;
+    hasPassword: boolean;
+    isActive: boolean;
+  } | null> {
+    const rows = await this.db.query<{
+      UserID: number;
+      Mobile: string | null;
+      FullName: string | null;
+      AuthProvider: string | null;
+      HasPassword: number;
+      IsActive: boolean | null;
+    }>(
+      `SELECT TOP 1
+         UserID,
+         Mobile,
+         FullName,
+         AuthProvider,
+         CASE WHEN PasswordHash IS NULL OR LEN(PasswordHash) = 0
+              THEN 0 ELSE 1 END AS HasPassword,
+         IsActive
+       FROM dbo.infymeet_users
+       WHERE Email = CAST(@Email AS NVARCHAR(200)) AND ISNULL(IsDeleted, 0) = 0`,
+      { Email: email },
+    );
+
+    const row = rows[0];
+    if (!row) return null;
+
+    return {
+      userId: Number(row.UserID),
+      mobile: row.Mobile,
+      fullName: row.FullName,
+      authProvider: row.AuthProvider,
+      hasPassword: Number(row.HasPassword) === 1,
+      isActive: row.IsActive !== false,
+    };
+  }
+
+  /** Overwrite the stored password. The caller must have verified the reset code. */
+  async updatePassword(userId: number, newPassword: string): Promise<InfymeetUser | null> {
+    await this.db.query(
+      `UPDATE dbo.infymeet_users
+       SET PasswordHash = @PasswordHash,
+           LastLoginDate = GETDATE()
+       WHERE UserID = CAST(@UserID AS BIGINT) AND ISNULL(IsDeleted, 0) = 0`,
+      { PasswordHash: this.hashPassword(newPassword), UserID: userId },
+    );
+    return this.findById(userId);
+  }
+
+  /** Record a mobile that has just passed OTP verification. */
+  async setVerifiedMobile(userId: number, mobile: string): Promise<InfymeetUser | null> {
+    await this.db.query(
+      `UPDATE dbo.infymeet_users
+       SET Mobile = CAST(@Mobile AS NVARCHAR(20)),
+           MobileVerified = 1,
+           LastLoginDate = GETDATE()
+       WHERE UserID = CAST(@UserID AS BIGINT) AND ISNULL(IsDeleted, 0) = 0`,
+      { Mobile: mobile, UserID: userId },
+    );
+    return this.findById(userId);
   }
 
   async touchLogin(userId: number): Promise<void> {

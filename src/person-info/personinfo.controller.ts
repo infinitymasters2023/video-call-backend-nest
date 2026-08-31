@@ -1,5 +1,5 @@
-import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param, Query, Headers } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { Body, Controller, HttpStatus, Post, HttpCode, UsePipes, ValidationPipe, Get, Param, Query, Headers , OnModuleInit } from '@nestjs/common';
+import { createHash, randomUUID } from 'crypto';
 
 import {
   ApiTags,
@@ -9,19 +9,23 @@ import { GetServiceCallDTO, SendCustomInviteDTO, SendMeetingDTO, TestWhatsappDto
 import { HelperService } from 'src/helper/helper.service';
 import { WhatsappService } from 'src/helper/whatsapp.service';
 import { MeetingSchedulerService } from './meeting-scheduler.service';
+import { MeetingsRepository } from 'src/meeting/meetings.repository';
+import { ScheduledJobsRepository } from 'src/meeting/scheduled-jobs.repository';
 import { AuthService } from 'src/auth/auth.service';
 
 
 
 @ApiTags('person-info')
 @Controller('person-info')
-export class PersonInfoController {
+export class PersonInfoController implements OnModuleInit {
   constructor(
     private readonly personInfoService: PersonInfoService,
     private readonly helperService: HelperService,
     private readonly whatsappService: WhatsappService,
     private readonly meetingSchedulerService: MeetingSchedulerService,
     private readonly authService: AuthService,
+    private readonly meetingsRepo: MeetingsRepository,
+    private readonly jobsRepo: ScheduledJobsRepository,
   ) { }
 
 
@@ -308,6 +312,11 @@ export class PersonInfoController {
   async sendCustomInvite(
     @Body() dto: SendCustomInviteDTO,
   ) {
+    // Log the meeting and who it went to before anything is sent, so the
+    // dashboard and the free-meeting count reflect it even if delivery later
+    // fails. Keyed on room id, so re-inviting does not create a second row.
+    const meetingId = await this.recordInvitedMeeting(dto);
+
     // The organizer's host link is always sent immediately (even when the
     // invitee emails are scheduled for later) so they can save / start it now.
     let hostEmailSent = false;
@@ -321,9 +330,9 @@ export class PersonInfoController {
     }
 
     if (dto.scheduleAt) {
-      const runAt = new Date(dto.scheduleAt);
+      const meetingAt = new Date(dto.scheduleAt);
 
-      if (Number.isNaN(runAt.getTime())) {
+      if (Number.isNaN(meetingAt.getTime())) {
         return {
           statusCode: 400,
           isSuccess: false,
@@ -332,7 +341,7 @@ export class PersonInfoController {
         };
       }
 
-      if (runAt.getTime() <= Date.now()) {
+      if (meetingAt.getTime() <= Date.now()) {
         return {
           statusCode: 400,
           isSuccess: false,
@@ -341,23 +350,446 @@ export class PersonInfoController {
         };
       }
 
+      // Send the invite NOW, carrying a calendar event for the future time.
+      //
+      // This used to queue the invite to go out AT the meeting's start, which
+      // meant nobody was told about the meeting until it was already beginning
+      // and the calendar entry only appeared at that moment. Scheduling a
+      // meeting has to put it in people's calendars straight away — that is the
+      // whole point of scheduling it.
+      const invite = await this.dispatchCustomInvite(dto);
+
+      // A short nudge before it starts. The calendar entry carries its own
+      // 10-minute alarm, so this is a belt-and-braces email for anyone who
+      // never added it.
+      const REMINDER_LEAD_MS = 10 * 60 * 1000;
+      const remindAt = new Date(
+        Math.max(meetingAt.getTime() - REMINDER_LEAD_MS, Date.now() + 60 * 1000),
+      );
+
       const scheduled = this.meetingSchedulerService.scheduleMeeting(
-        runAt,
-        async () => this.dispatchCustomInvite(dto),
+        remindAt,
+        async () => this.dispatchReminder(dto),
+        {
+          meetingId: meetingId ?? undefined,
+          uid: this.meetingUid(dto.meetingLink),
+          meetingLink: dto.meetingLink,
+          title: dto.title?.trim() || undefined,
+          hostName: dto.participantName?.trim() || undefined,
+          hostEmail: dto.hostEmail?.trim().toLowerCase() || undefined,
+          emails: dto.emails ?? [],
+          durationMinutes:
+            Number(dto.durationMinutes) > 0 ? Number(dto.durationMinutes) : 60,
+          meetingAt: meetingAt.toISOString(),
+        },
       );
 
       return {
-        statusCode: 202,
+        statusCode: 200,
         isSuccess: true,
         message: hostEmailSent
-          ? 'Meeting scheduled — invites queued and host link emailed to you'
-          : 'Invite email scheduled successfully',
-        data: { ...scheduled, hostEmailSent },
+          ? 'Meeting scheduled — invites sent and your host link emailed to you'
+          : 'Meeting scheduled and invites sent',
+        data: {
+          ...scheduled,
+          meetingAt: meetingAt.toISOString(),
+          hostEmailSent,
+          invite: (invite as any)?.data ?? null,
+        },
       };
     }
 
     const res = await this.dispatchCustomInvite(dto);
     return { ...res, data: { result: (res as any)?.data, hostEmailSent } };
+  }
+
+  /**
+   * Write the meeting row plus its invitee rows for an invite request.
+   *
+   * Returns the meeting id, or null when the write failed — sending must never
+   * be blocked by a logging problem, so callers treat null as "carry on".
+   */
+  private async recordInvitedMeeting(dto: SendCustomInviteDTO): Promise<number | null> {
+    try {
+      let roomId = '';
+      try {
+        roomId = new URL(dto.meetingLink).searchParams.get('roomId') ?? '';
+      } catch {
+        /* unparseable link — nothing to key on */
+      }
+      if (!roomId) return null;
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const clean = (list?: string[]) =>
+        Array.from(
+          new Set(
+            (list ?? [])
+              .map((e) => (e ?? '').trim().toLowerCase())
+              .filter((e) => emailRegex.test(e)),
+          ),
+        );
+
+      const to = clean(dto.emails);
+      const cc = clean(dto.cc);
+      const whenSource = dto.scheduleAt || dto.meetingTime;
+      const start = whenSource ? new Date(whenSource) : null;
+
+      const meetingId = await this.meetingsRepo.recordMeeting({
+        roomId,
+        hostName: dto.participantName?.trim() || null,
+        hostEmail: dto.hostEmail?.trim().toLowerCase() || null,
+        title: dto.title?.trim() || null,
+        meetingLink: dto.meetingLink,
+        hostLink: dto.hostLink ?? null,
+        calendarUid: this.meetingUid(dto.meetingLink),
+        scheduledStart: start && !Number.isNaN(start.getTime()) ? start : null,
+        durationMinutes:
+          Number(dto.durationMinutes) > 0 ? Number(dto.durationMinutes) : null,
+        meetingType: dto.scheduleAt ? 'scheduled' : 'instant',
+      });
+
+      if (meetingId) {
+        await this.meetingsRepo.recordParticipants(meetingId, [
+          ...(dto.hostEmail
+            ? [{
+                email: dto.hostEmail.trim().toLowerCase(),
+                name: dto.participantName ?? null,
+                role: 'host',
+                channel: 'to',
+              }]
+            : []),
+          ...to.map((email) => ({ email, role: 'guest', channel: 'to' })),
+          ...cc.map((email) => ({ email, role: 'guest', channel: 'cc' })),
+        ]);
+      }
+
+      return meetingId;
+    } catch (err) {
+      console.error('Could not log the invited meeting', err);
+      return null;
+    }
+  }
+
+  /**
+   * Re-arm invite timers that were pending when the process last stopped.
+   *
+   * The stored payload is the original invite request, so feeding it back
+   * through dispatchCustomInvite reconstructs exactly the work that was queued.
+   */
+  async onModuleInit(): Promise<void> {
+    await this.meetingSchedulerService.restorePending(
+      (payload) => async () => this.dispatchCustomInvite(payload as SendCustomInviteDTO),
+    );
+  }
+
+  /**
+   * Every scheduled meeting, soonest first.
+   *
+   * Read from the database rather than the in-process timer map, so the list
+   * still shows everything after a restart. Live status changes are mirrored
+   * into the table as they happen, so the two agree.
+   */
+  @Get('/scheduled_meetings')
+  async listScheduledMeetings(@Query('hostEmail') hostEmail?: string) {
+    const rows = await this.jobsRepo.listForHost(hostEmail);
+
+    const data = rows.map((r: any) => {
+      let payload: any = {};
+      try {
+        payload = r.Payload ? JSON.parse(r.Payload) : {};
+      } catch {
+        /* a malformed payload should not hide the row */
+      }
+
+      return {
+        scheduleId: r.ScheduleGuid,
+        // The stored RunAt is the reminder; people care about the meeting.
+        runAt: payload.meetingAt ?? r.RunAt,
+        reminderAt: r.RunAt,
+        createdAt: r.CreatedDate,
+        status: r.Status,
+        completedAt: r.CompletedAt,
+        error: r.LastError,
+        meta: {
+          uid: r.CalendarUID,
+          meetingLink: r.MeetingLink,
+          title: r.Title,
+          hostName: r.HostName,
+          hostEmail: r.HostEmail,
+          emails: payload.emails ?? [],
+          durationMinutes: r.DurationMinutes,
+        },
+      };
+    });
+
+    // Anything this process queued but could not persist (no room id on the
+    // link) would otherwise be invisible, so fold it in.
+    const known = new Set(data.map((d) => String(d.scheduleId).toLowerCase()));
+    const inMemory = this.meetingSchedulerService
+      .listJobs(hostEmail ? { hostEmail } : undefined)
+      .filter((j) => !known.has(String(j.scheduleId).toLowerCase()));
+
+    return {
+      statusCode: 200,
+      isSuccess: true,
+      message: 'OK',
+      data: [...data, ...inMemory].sort((a, b) =>
+        String(a.runAt).localeCompare(String(b.runAt)),
+      ),
+    };
+  }
+
+  /**
+   * Move a scheduled meeting to a new time.
+   *
+   * Anyone already holding the calendar invite gets an update carrying the same
+   * UID and a higher SEQUENCE, so their existing event moves instead of a
+   * second one appearing beside it.
+   */
+  @Post('/reschedule_meeting')
+  async rescheduleMeeting(
+    @Body() body: { scheduleId?: string; newTime?: string; notify?: boolean },
+  ) {
+    const scheduleId = (body?.scheduleId ?? '').trim();
+    const runAt = new Date(body?.newTime ?? '');
+
+    if (!scheduleId) {
+      return { statusCode: 400, isSuccess: false, message: 'scheduleId is required', data: null };
+    }
+    if (Number.isNaN(runAt.getTime())) {
+      return { statusCode: 400, isSuccess: false, message: 'Invalid newTime', data: null };
+    }
+    if (runAt.getTime() <= Date.now()) {
+      return { statusCode: 400, isSuccess: false, message: 'Pick a future date and time.', data: null };
+    }
+
+    const job = this.meetingSchedulerService.getJobStatus(scheduleId);
+    if (!job) {
+      return { statusCode: 404, isSuccess: false, message: 'That scheduled meeting no longer exists.', data: null };
+    }
+
+    // The user picks the meeting's new time; the job itself is a reminder, so
+    // it is re-armed shortly before that rather than exactly on it.
+    const REMINDER_LEAD_MS = 10 * 60 * 1000;
+    const remindAt = new Date(
+      Math.max(runAt.getTime() - REMINDER_LEAD_MS, Date.now() + 60 * 1000),
+    );
+
+    const moved = this.meetingSchedulerService.reschedule(scheduleId, remindAt);
+    if (!moved.ok) {
+      return {
+        statusCode: 409,
+        isSuccess: false,
+        message:
+          moved.reason === 'completed'
+            ? 'Those invites have already gone out, so the time cannot be changed here.'
+            : `This meeting cannot be rescheduled (${moved.reason}).`,
+        data: null,
+      };
+    }
+
+    this.meetingSchedulerService.updateMeta(scheduleId, {
+      meetingAt: runAt.toISOString(),
+    });
+
+    let notified = false;
+    if (body?.notify !== false) {
+      notified = await this.sendCalendarUpdate(job.meta, runAt, 'REQUEST');
+    }
+
+    return {
+      statusCode: 200,
+      isSuccess: true,
+      message: notified ? 'Meeting moved and everyone notified.' : 'Meeting moved.',
+      data: { scheduleId, runAt: runAt.toISOString(), notified },
+    };
+  }
+
+  /** Cancel a scheduled meeting and withdraw the calendar event. */
+  @Post('/cancel_meeting')
+  async cancelMeeting(@Body() body: { scheduleId?: string; notify?: boolean }) {
+    const scheduleId = (body?.scheduleId ?? '').trim();
+    if (!scheduleId) {
+      return { statusCode: 400, isSuccess: false, message: 'scheduleId is required', data: null };
+    }
+
+    const job = this.meetingSchedulerService.getJobStatus(scheduleId);
+    if (!job) {
+      return { statusCode: 404, isSuccess: false, message: 'That scheduled meeting no longer exists.', data: null };
+    }
+
+    const stopped = this.meetingSchedulerService.cancel(scheduleId);
+    if (!stopped.ok) {
+      return {
+        statusCode: 409,
+        isSuccess: false,
+        message:
+          stopped.reason === 'completed'
+            ? 'Those invites have already been sent.'
+            : `This meeting cannot be cancelled (${stopped.reason}).`,
+        data: null,
+      };
+    }
+
+    let notified = false;
+    if (body?.notify !== false) {
+      notified = await this.sendCalendarUpdate(
+        job.meta,
+        new Date((job.meta as any)?.meetingAt || job.runAt),
+        'CANCEL',
+      );
+    }
+
+    return {
+      statusCode: 200,
+      isSuccess: true,
+      message: notified ? 'Meeting cancelled and everyone notified.' : 'Meeting cancelled.',
+      data: { scheduleId, notified },
+    };
+  }
+
+  /**
+   * Short "starting soon" nudge for a meeting whose invite already went out.
+   *
+   * Deliberately carries no calendar attachment: the event is already in
+   * everyone's calendar from the original invite, and sending another REQUEST
+   * here would just be a second copy of the same thing.
+   */
+  private async dispatchReminder(dto: SendCustomInviteDTO) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const recipients = Array.from(
+      new Set(
+        [...(dto.emails ?? []), ...(dto.cc ?? []), dto.hostEmail ?? '']
+          .map((e) => (e ?? '').trim())
+          .filter((e) => emailRegex.test(e)),
+      ),
+    );
+    if (recipients.length === 0) {
+      return { statusCode: 200, isSuccess: false, message: 'No recipients', data: null };
+    }
+
+    const hostName = dto.participantName?.trim() || 'Host';
+    const title = dto.title?.trim() || `${hostName} - Video meeting`;
+    const whenText = this.formatWhen(dto.scheduleAt || dto.meetingTime);
+
+    const template = `
+      <div dir="ltr">
+        <p>Hello,</p>
+        <p>A quick reminder: <strong>${title}</strong> starts shortly.</p>
+        <p style="margin:0 0 8px"><strong>When:</strong> ${whenText}</p>
+        <p>Meeting Link: <a href="${dto.meetingLink}">Click here to join</a></p>
+        <p>
+          Regards<br>
+          ${hostName}<br>
+          Infinity Assurance Solutions Pvt. Ltd.
+        </p>
+      </div>
+    `;
+
+    const res = await this.helperService.sendEmail(
+      template,
+      { name: 'Guest' },
+      recipients.join(', '),
+      `Starting soon: ${title}`,
+      undefined,
+      undefined,
+    );
+
+    return {
+      statusCode: 200,
+      isSuccess: res === 'Email sent successfully',
+      message: 'Reminder sent',
+      data: { recipients },
+    };
+  }
+
+  /**
+   * Email a calendar update (a move or a withdrawal) for an existing meeting.
+   *
+   * Reuses the meeting's UID with a bumped SEQUENCE, which is what makes a
+   * calendar treat this as the same event rather than a new one.
+   */
+  private async sendCalendarUpdate(
+    meta: {
+      uid?: string;
+      meetingLink?: string;
+      title?: string;
+      hostName?: string;
+      hostEmail?: string;
+      emails?: string[];
+      durationMinutes?: number;
+    },
+    start: Date,
+    method: 'REQUEST' | 'CANCEL',
+  ): Promise<boolean> {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const recipients = Array.from(
+      new Set(
+        [...(meta.emails ?? []), meta.hostEmail ?? '']
+          .map((e) => (e ?? '').trim())
+          .filter((e) => emailRegex.test(e)),
+      ),
+    );
+    if (recipients.length === 0) return false;
+
+    const uid = meta.uid || this.meetingUid(meta.meetingLink ?? '');
+    const sequence = await this.bumpCalendarSequence(meta.meetingLink, uid);
+    const hostName = meta.hostName || 'Host';
+    const title = meta.title || `${hostName} - Video meeting`;
+    const whenText = this.formatWhen(start.toISOString());
+    const cancelled = method === 'CANCEL';
+
+    const template = cancelled
+      ? `
+      <div dir="ltr">
+        <p>Hello,</p>
+        <p><strong>${hostName}</strong> has cancelled this meeting.</p>
+        <p style="margin:0 0 8px"><strong>Meeting:</strong> ${title}</p>
+        <p style="margin:0 0 8px"><strong>Was scheduled for:</strong> ${whenText}</p>
+        <p>It has been removed from your calendar. No action is needed.</p>
+        <p>Regards<br>${hostName}<br>Infinity Assurance Solutions Pvt. Ltd.</p>
+      </div>`
+      : `
+      <div dir="ltr">
+        <p>Hello,</p>
+        <p><strong>${hostName}</strong> has moved this meeting to a new time.</p>
+        <p style="margin:0 0 8px"><strong>Meeting:</strong> ${title}</p>
+        <p style="margin:0 0 8px"><strong>New time:</strong> ${whenText}</p>
+        <p>Meeting Link: <a href="${meta.meetingLink}">Click here to join</a></p>
+        <p>Your calendar entry has been updated automatically.</p>
+        <p>Regards<br>${hostName}<br>Infinity Assurance Solutions Pvt. Ltd.</p>
+      </div>`;
+
+    const ics = this.buildMeetingIcs({
+      start,
+      durationMinutes:
+        meta.durationMinutes && meta.durationMinutes > 0 ? meta.durationMinutes : 60,
+      summary: title,
+      description: cancelled
+        ? 'This meeting has been cancelled.'
+        : `Join: ${meta.meetingLink ?? ''}`,
+      location: meta.meetingLink ?? '',
+      organizerName: hostName,
+      organizerEmail: 'no-reply@infinityassurance.com',
+      attendees: recipients,
+      uid,
+      sequence,
+      method,
+    });
+
+    try {
+      const res = await this.helperService.sendEmail(
+        template,
+        { name: 'Guest' },
+        recipients.join(', '),
+        cancelled ? `Cancelled: ${title}` : `Updated: ${title}`,
+        undefined,
+        { method, filename: cancelled ? 'cancel.ics' : 'invite.ics', content: ics },
+      );
+      return res === 'Email sent successfully';
+    } catch {
+      return false;
+    }
   }
 
   /** Human-readable IST time string for the email body. */
@@ -434,6 +866,10 @@ export class PersonInfoController {
           organizerName: inviterName,
           organizerEmail: 'no-reply@infinityassurance.com',
           attendees: [hostEmail],
+          // Same UID as the invitee copy, so a host who is also on the invite
+          // list ends up with one calendar event instead of two.
+          uid: this.meetingUid(dto.meetingLink),
+          sequence: await this.calendarSequence(dto.meetingLink),
         });
         icalEvent = { method: 'REQUEST', filename: 'invite.ics', content: ics };
       }
@@ -559,6 +995,8 @@ export class PersonInfoController {
           organizerName: inviterName,
           organizerEmail: 'no-reply@infinityassurance.com',
           attendees: [...emails, ...cc],
+          uid: this.meetingUid(meetingLink),
+          sequence: await this.calendarSequence(meetingLink),
         });
         icalEvent = { method: 'REQUEST', filename: 'invite.ics', content: ics };
       }
@@ -592,6 +1030,75 @@ export class PersonInfoController {
    * Used as a text/calendar (METHOD:REQUEST) part so Gmail, Apple Calendar
    * and Outlook detect the invite and add it to the recipient's calendar.
    */
+  /** The room id inside a meeting link, or '' when there isn't one. */
+  private roomIdOf(meetingLink?: string): string {
+    try {
+      return new URL(meetingLink ?? '').searchParams.get('roomId') ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Current calendar SEQUENCE for a meeting.
+   *
+   * Prefers the value stored on the meeting row so it survives a restart, and
+   * falls back to the in-memory counter when the column is not there yet or the
+   * link carries no room id.
+   */
+  private async calendarSequence(meetingLink?: string, uid?: string): Promise<number> {
+    const roomId = this.roomIdOf(meetingLink);
+    if (roomId) {
+      const stored = await this.meetingsRepo.currentCalendarSequence(roomId);
+      if (stored !== null) return stored;
+    }
+    return this.meetingSchedulerService.currentSequence(
+      uid || this.meetingUid(meetingLink ?? ''),
+    );
+  }
+
+  /** Advance the SEQUENCE for a meeting and return the new value. */
+  private async bumpCalendarSequence(meetingLink?: string, uid?: string): Promise<number> {
+    const roomId = this.roomIdOf(meetingLink);
+    if (roomId) {
+      const next = await this.meetingsRepo.nextCalendarSequence(roomId);
+      if (next !== null) {
+        // Keep the in-memory counter in step so a later fallback cannot hand
+        // back a number lower than one already sent.
+        this.meetingSchedulerService.setSequence(
+          uid || this.meetingUid(meetingLink ?? ''),
+          next,
+        );
+        return next;
+      }
+    }
+    return this.meetingSchedulerService.nextSequence(
+      uid || this.meetingUid(meetingLink ?? ''),
+    );
+  }
+
+  /**
+   * A stable calendar UID for a meeting, derived from its room id.
+   *
+   * Every email about the same meeting must carry the same UID. When the host
+   * copy and the invitee copy each generated their own random UID, a host who
+   * was also on the invite list received two different events and the calendar
+   * showed the meeting twice. Deriving it from the link makes the two copies —
+   * and any later reschedule or cancellation — refer to one single event.
+   */
+  private meetingUid(meetingLink: string): string {
+    let roomId = '';
+    try {
+      roomId = new URL(meetingLink).searchParams.get('roomId') ?? '';
+    } catch {
+      /* not a parseable URL — fall through to hashing the whole string */
+    }
+    const key =
+      roomId ||
+      createHash('sha1').update(meetingLink || 'infymeet').digest('hex').slice(0, 24);
+    return `infymeet-${key}@infymeet`;
+  }
+
   private buildMeetingIcs(opts: {
     start: Date;
     durationMinutes: number;
@@ -601,6 +1108,11 @@ export class PersonInfoController {
     organizerName: string;
     organizerEmail: string;
     attendees: string[];
+    /** Stable per meeting. Omit only if there is genuinely no meeting to tie to. */
+    uid?: string;
+    /** Must increase on every update so calendars accept the change. */
+    sequence?: number;
+    method?: 'REQUEST' | 'CANCEL';
   }): string {
     const toUtc = (d: Date) =>
       d
@@ -617,7 +1129,10 @@ export class PersonInfoController {
         .replace(/\r?\n/g, '\\n');
 
     const end = new Date(opts.start.getTime() + opts.durationMinutes * 60 * 1000);
-    const uid = `${randomUUID()}@infymeet`;
+    const uid = opts.uid || `${randomUUID()}@infymeet`;
+    const method = opts.method ?? 'REQUEST';
+    const sequence = Number.isFinite(opts.sequence) ? Number(opts.sequence) : 0;
+    const cancelled = method === 'CANCEL';
 
     const attendeeLines = opts.attendees.map(
       (email) =>
@@ -629,7 +1144,7 @@ export class PersonInfoController {
       'VERSION:2.0',
       'PRODID:-//InfyMeet//Meeting Invite//EN',
       'CALSCALE:GREGORIAN',
-      'METHOD:REQUEST',
+      `METHOD:${method}`,
       'BEGIN:VEVENT',
       `UID:${uid}`,
       `DTSTAMP:${toUtc(new Date())}`,
@@ -641,14 +1156,19 @@ export class PersonInfoController {
       `URL:${opts.location}`,
       `ORGANIZER;CN=${esc(opts.organizerName)}:mailto:${opts.organizerEmail}`,
       ...attendeeLines,
-      'STATUS:CONFIRMED',
-      'SEQUENCE:0',
+      `STATUS:${cancelled ? 'CANCELLED' : 'CONFIRMED'}`,
+      `SEQUENCE:${sequence}`,
       'TRANSP:OPAQUE',
-      'BEGIN:VALARM',
-      'TRIGGER:-PT10M',
-      'ACTION:DISPLAY',
-      'DESCRIPTION:Reminder',
-      'END:VALARM',
+      // A cancellation carries no alarm — the event is going away.
+      ...(cancelled
+        ? []
+        : [
+            'BEGIN:VALARM',
+            'TRIGGER:-PT10M',
+            'ACTION:DISPLAY',
+            'DESCRIPTION:Reminder',
+            'END:VALARM',
+          ]),
       'END:VEVENT',
       'END:VCALENDAR',
     ];
