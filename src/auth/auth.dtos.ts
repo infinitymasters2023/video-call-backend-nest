@@ -76,6 +76,12 @@ export class CompleteProfileDto {
     otp!: string;
 }
 
+export class AvatarDto {
+    /** A data URL of the resized image, or null to remove the current photo. */
+    @ApiProperty({ required: false, nullable: true })
+    image?: string | null;
+}
+
 export class GoogleLoginDto {
     fullName?: string;
     email?: string;

@@ -23,6 +23,14 @@ export interface ScheduleMeta {
   durationMinutes?: number;
   /** When the meeting itself starts — distinct from when this job runs. */
   meetingAt?: string;
+  /**
+   * When the invitation email actually reached the guests.
+   *
+   * The job itself only carries the reminder, so its status stays 'scheduled'
+   * right up to the meeting. Without this the list said "Scheduled" even
+   * though everyone had already been invited.
+   */
+  invitedAt?: string;
 }
 
 interface MeetingScheduleJob {
@@ -273,6 +281,45 @@ export class MeetingSchedulerService implements OnModuleInit {
         payload: job.meta,
       });
     }
+  }
+
+  /**
+   * Stamp every pending job for a meeting as invited.
+   *
+   * Sending the invite again for a meeting that is already booked has to move
+   * that row out of "Scheduled", otherwise the host is looking at a list that
+   * disagrees with the email they just watched go out.
+   */
+  markInvited(meetingLink: string, at: Date = new Date()): number {
+    const room = this.roomKey(meetingLink);
+    if (!room) return 0;
+
+    let touched = 0;
+    for (const job of this.jobs.values()) {
+      if (job.status !== 'scheduled') continue;
+      if (this.roomKey(job.meta.meetingLink ?? '') !== room) continue;
+      this.updateMeta(job.id, { invitedAt: at.toISOString() });
+      touched += 1;
+    }
+    return touched;
+  }
+
+  /**
+   * What identifies a meeting inside its link.
+   *
+   * The room id is the stable part — the host flag and display name ride along
+   * as extra query parameters, so comparing whole URLs would miss a match.
+   */
+  private roomKey(link: string): string {
+    const raw = String(link ?? '').trim();
+    if (!raw) return '';
+    try {
+      const roomId = new URL(raw).searchParams.get('roomId')?.trim();
+      if (roomId) return roomId.toLowerCase();
+    } catch {
+      /* not a URL we can parse — fall back to the whole string */
+    }
+    return raw.toLowerCase();
   }
 
   /** Public shape used by the list endpoint. */

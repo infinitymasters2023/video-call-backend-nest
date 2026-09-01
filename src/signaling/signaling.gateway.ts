@@ -248,6 +248,13 @@ export class SignalingGateway implements OnGatewayDisconnect {
   // =========================
   // CHAT MESSAGE
   // =========================
+  /**
+   * A message may carry one picture — a whiteboard page shared with the room.
+   * Socket.IO drops the connection on packets over its buffer limit, so an
+   * oversized image is stripped here and the text still goes through.
+   */
+  private static readonly MAX_CHAT_IMAGE = 700_000;
+
   @SubscribeMessage('chat-message')
   handleChat(
     @MessageBody()
@@ -257,16 +264,30 @@ export class SignalingGateway implements OnGatewayDisconnect {
       userName?: string;
       targetId?: string;
       isAdmin?: boolean;
+      image?: string;
+      fileName?: string;
     },
     @ConnectedSocket() client: Socket,
   ) {
     const { roomId, text, targetId } = data;
+
+    const image =
+      typeof data.image === 'string' &&
+      data.image.startsWith('data:image/') &&
+      data.image.length <= SignalingGateway.MAX_CHAT_IMAGE
+        ? data.image
+        : undefined;
+
+    if (!text && !image) return;
+
     const payload = {
       text,
       userName: data.userName || (client as any).userName || 'Guest',
       targetId,
       fromId: client.id,
       isAdmin: !!(data.isAdmin ?? (client as any).isAdmin),
+      image,
+      fileName: image ? String(data.fileName || 'shared-image.jpg').slice(0, 120) : undefined,
     };
 
     if (targetId) {
@@ -275,7 +296,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
     }
 
     client.to(roomId).emit('chat-message', payload);
-    console.log(`💬 ${payload.userName}: ${text}`);
+    console.log(`💬 ${payload.userName}: ${text}${image ? ' [image]' : ''}`);
   }
 
   private relayToPeer(
@@ -480,6 +501,79 @@ export class SignalingGateway implements OnGatewayDisconnect {
   }
 
   // =========================
+  // LIVE ANNOTATION (host draws over the stage)
+  // =========================
+  /**
+   * Pure relay of one drawing operation to the rest of the room.
+   *
+   * Host only, for the same reason as host-policy: anyone able to emit this
+   * could scribble over everybody's screen. The payload is bounded here so a
+   * single op cannot carry an unbounded point list into every other client.
+   */
+  @SubscribeMessage('annotate')
+  handleAnnotate(
+    @MessageBody() data: { roomId?: string; op?: any },
+    @ConnectedSocket() client: Socket,
+  ) {
+    if (!(client as any).isAdmin) return;
+    const roomId = data?.roomId ?? (client as any).roomId;
+    const op = data?.op;
+    if (!roomId || !op || typeof op !== 'object') return;
+
+    if (Array.isArray(op.pts) && op.pts.length > 2000) {
+      op.pts = op.pts.slice(0, 2000);
+    }
+    if (Array.isArray(op.strokes)) {
+      op.strokes = op.strokes.slice(-400);
+    }
+
+    client.to(roomId).emit('annotate', { op, socketId: client.id });
+  }
+
+  // =========================
+  // SHARED WHITEBOARD (one person's board, live on everyone's screen)
+  // =========================
+  /**
+   * Relay of one whiteboard message to the rest of the room.
+   *
+   * Unlike annotation this is not host-only: a guest may present a board when
+   * the host allows presenting, which the client checks before it starts.
+   * A pasted picture travels inside `op.src`, so that one field is bounded —
+   * anything larger would break the socket for everybody in the room.
+   */
+  private static readonly MAX_BOARD_IMAGE = 900_000;
+
+  @SubscribeMessage('board')
+  handleBoard(
+    @MessageBody() data: { roomId?: string; msg?: any },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const roomId = data?.roomId ?? (client as any).roomId;
+    const msg = data?.msg;
+    if (!roomId || !msg || typeof msg !== 'object' || typeof msg.t !== 'string') return;
+
+    if (msg.t === 'op') {
+      const op = msg.op;
+      if (!op || typeof op !== 'object') return;
+      if (typeof op.src === 'string' && op.src.length > SignalingGateway.MAX_BOARD_IMAGE) return;
+      if (Array.isArray(op.pts) && op.pts.length > 8000) op.pts = op.pts.slice(0, 8000);
+      if (typeof op.text === 'string') op.text = op.text.slice(0, 4000);
+    } else if (msg.t === 'order') {
+      if (!Array.isArray(msg.ids)) return;
+      msg.ids = msg.ids.slice(0, 4000);
+    } else if (msg.t === 'pages') {
+      if (!Array.isArray(msg.pages)) return;
+      msg.pages = msg.pages.slice(0, 60);
+    }
+
+    client.to(roomId).emit('board', {
+      msg,
+      socketId: client.id,
+      userName: (client as any).userName || 'Someone',
+    });
+  }
+
+  // =========================
   // HOST POLICY (moderation rules)
   // =========================
   /**
@@ -504,7 +598,11 @@ export class SignalingGateway implements OnGatewayDisconnect {
     const allowed = [
       'muteLocked',
       'muteOnEntry',
+      'camLocked',
+      'recordLocked',
       'chatLocked',
+      'chatHostOnly',
+      'chatPrivateLocked',
       'reactionsLocked',
       'shareLocked',
       'roomLocked',

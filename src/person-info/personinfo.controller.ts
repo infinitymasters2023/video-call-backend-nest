@@ -350,18 +350,18 @@ export class PersonInfoController implements OnModuleInit {
         };
       }
 
-      // Send the invite NOW, carrying a calendar event for the future time.
+      // Tell everyone NOW, carrying a calendar event for the future time.
       //
-      // This used to queue the invite to go out AT the meeting's start, which
+      // This used to queue the notice to go out AT the meeting's start, which
       // meant nobody was told about the meeting until it was already beginning
       // and the calendar entry only appeared at that moment. Scheduling a
       // meeting has to put it in people's calendars straight away — that is the
       // whole point of scheduling it.
       const invite = await this.dispatchCustomInvite(dto);
 
-      // A short nudge before it starts. The calendar entry carries its own
-      // 10-minute alarm, so this is a belt-and-braces email for anyone who
-      // never added it.
+      // The invite itself lands shortly before the meeting. The calendar entry
+      // carries its own 10-minute alarm, so this also covers anyone who never
+      // added it.
       const REMINDER_LEAD_MS = 10 * 60 * 1000;
       const remindAt = new Date(
         Math.max(meetingAt.getTime() - REMINDER_LEAD_MS, Date.now() + 60 * 1000),
@@ -388,8 +388,8 @@ export class PersonInfoController implements OnModuleInit {
         statusCode: 200,
         isSuccess: true,
         message: hostEmailSent
-          ? 'Meeting scheduled — invites sent and your host link emailed to you'
-          : 'Meeting scheduled and invites sent',
+          ? 'Meeting scheduled — everyone notified, invite goes out 10 minutes before, and your host link is in your inbox'
+          : 'Meeting scheduled — everyone notified, invite goes out 10 minutes before',
         data: {
           ...scheduled,
           meetingAt: meetingAt.toISOString(),
@@ -400,6 +400,13 @@ export class PersonInfoController implements OnModuleInit {
     }
 
     const res = await this.dispatchCustomInvite(dto);
+
+    // "Send invite now" on a meeting that is already booked: the pending
+    // reminder stays where it is, but the list must stop calling it Scheduled.
+    if ((res as any)?.isSuccess) {
+      this.meetingSchedulerService.markInvited(dto.meetingLink);
+    }
+
     return { ...res, data: { result: (res as any)?.data, hostEmailSent } };
   }
 
@@ -518,6 +525,9 @@ export class PersonInfoController implements OnModuleInit {
           hostEmail: r.HostEmail,
           emails: payload.emails ?? [],
           durationMinutes: r.DurationMinutes,
+          // Only the payload knows the guests have already been emailed; the
+          // row's own status stays 'scheduled' until the reminder fires.
+          invitedAt: payload.invitedAt ?? null,
         },
       };
     });

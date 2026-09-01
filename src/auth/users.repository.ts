@@ -17,6 +17,7 @@ export interface InfymeetUser {
   MobileVerified: boolean | null;
   CreatedDate: Date | null;
   LastLoginDate: Date | null;
+  AvatarUrl: string | null;
 }
 
 /** The columns every read returns. PasswordHash is never in this list. */
@@ -29,7 +30,42 @@ const USER_COLUMNS = `
 export class UsersRepository {
   private readonly logger = new Logger(UsersRepository.name);
 
+  /** Resolved once per process: does dbo.infymeet_users carry AvatarUrl yet? */
+  private avatarColumn: Promise<boolean> | null = null;
+
   constructor(private readonly db: DatabaseService) {}
+
+  /**
+   * Add the avatar column if this database has not got it yet.
+   *
+   * Doing it here rather than in a migration script means a freshly pulled
+   * build behaves the same on a developer machine and on the live server. If
+   * the login has no rights to alter the table, reads fall back to a NULL
+   * avatar instead of failing — the rest of the account still works.
+   */
+  private ensureAvatarColumn(): Promise<boolean> {
+    if (!this.avatarColumn) {
+      this.avatarColumn = this.db
+        .query<{ Present: number }>(
+          `IF COL_LENGTH('dbo.infymeet_users', 'AvatarUrl') IS NULL
+             ALTER TABLE dbo.infymeet_users ADD AvatarUrl NVARCHAR(MAX) NULL;
+           SELECT CASE WHEN COL_LENGTH('dbo.infymeet_users', 'AvatarUrl') IS NULL
+                       THEN 0 ELSE 1 END AS Present;`,
+        )
+        .then((rows) => Number(rows[0]?.Present ?? 0) === 1)
+        .catch((err) => {
+          this.logger.warn(`Avatar column unavailable, profile photos disabled: ${err}`);
+          return false;
+        });
+    }
+    return this.avatarColumn;
+  }
+
+  /** The read column list, with AvatarUrl only when the database has it. */
+  private async columns(): Promise<string> {
+    const present = await this.ensureAvatarColumn();
+    return `${USER_COLUMNS}, ${present ? 'AvatarUrl' : "CAST(NULL AS NVARCHAR(MAX)) AS AvatarUrl"}`;
+  }
 
   // ── Password hashing ────────────────────────────────────────────────
   //
@@ -74,7 +110,7 @@ export class UsersRepository {
 
   async findByEmail(email: string): Promise<InfymeetUser | null> {
     const rows = await this.db.query<InfymeetUser>(
-      `SELECT TOP 1 ${USER_COLUMNS}
+      `SELECT TOP 1 ${await this.columns()}
        FROM dbo.infymeet_users
        WHERE Email = CAST(@Email AS NVARCHAR(200)) AND ISNULL(IsDeleted, 0) = 0`,
       { Email: email },
@@ -95,7 +131,7 @@ export class UsersRepository {
     if (!key) return null;
 
     const rows = await this.db.query<InfymeetUser>(
-      `SELECT TOP 1 ${USER_COLUMNS}
+      `SELECT TOP 1 ${await this.columns()}
        FROM dbo.infymeet_users
        WHERE ISNULL(IsDeleted, 0) = 0
          AND Mobile IS NOT NULL
@@ -141,7 +177,7 @@ export class UsersRepository {
 
   async findById(userId: number): Promise<InfymeetUser | null> {
     const rows = await this.db.query<InfymeetUser>(
-      `SELECT TOP 1 ${USER_COLUMNS}
+      `SELECT TOP 1 ${await this.columns()}
        FROM dbo.infymeet_users
        WHERE UserID = CAST(@UserID AS BIGINT) AND ISNULL(IsDeleted, 0) = 0`,
       { UserID: userId },
@@ -217,7 +253,7 @@ export class UsersRepository {
         WHERE UserID = @UserID;
       END
 
-      SELECT ${USER_COLUMNS} FROM dbo.infymeet_users WHERE UserID = @UserID;
+      SELECT ${await this.columns()} FROM dbo.infymeet_users WHERE UserID = @UserID;
       `,
       {
         GoogleID: profile.googleId,
@@ -253,7 +289,7 @@ export class UsersRepository {
           )
       )
       BEGIN
-        SELECT TOP 0 ${USER_COLUMNS} FROM dbo.infymeet_users;
+        SELECT TOP 0 ${await this.columns()} FROM dbo.infymeet_users;
       END
       ELSE
       BEGIN
@@ -265,7 +301,7 @@ export class UsersRepository {
           (@FullName, @Email, @Mobile, @PasswordHash, 'local', 1,
            GETDATE(), GETDATE(), 0, 1, 'user', 0);
         SET @NewID = SCOPE_IDENTITY();
-        SELECT ${USER_COLUMNS} FROM dbo.infymeet_users WHERE UserID = @NewID;
+        SELECT ${await this.columns()} FROM dbo.infymeet_users WHERE UserID = @NewID;
       END
       `,
       {
@@ -375,6 +411,24 @@ export class UsersRepository {
     return this.findById(userId);
   }
 
+  /**
+   * Store (or clear, with null) the user's profile photo.
+   *
+   * Returns null when this database has no avatar column, so the caller can
+   * tell "not saved" apart from "saved nothing".
+   */
+  async setAvatar(userId: number, avatarUrl: string | null): Promise<InfymeetUser | null> {
+    if (!(await this.ensureAvatarColumn())) return null;
+
+    await this.db.query(
+      `UPDATE dbo.infymeet_users
+       SET AvatarUrl = @AvatarUrl
+       WHERE UserID = CAST(@UserID AS BIGINT) AND ISNULL(IsDeleted, 0) = 0`,
+      { AvatarUrl: avatarUrl, UserID: userId },
+    );
+    return this.findById(userId);
+  }
+
   async touchLogin(userId: number): Promise<void> {
     await this.db
       .query(`UPDATE dbo.infymeet_users SET LastLoginDate = GETDATE() WHERE UserID = @UserID`, {
@@ -393,6 +447,7 @@ export class UsersRepository {
       role: user.Role ?? 'user',
       authProvider: user.AuthProvider ?? 'local',
       emailVerified: !!user.EmailVerified,
+      avatarUrl: user.AvatarUrl ?? '',
     };
   }
 }

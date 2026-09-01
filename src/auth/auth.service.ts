@@ -34,6 +34,14 @@ const OTP_EMAIL_TEMPLATE = `
 </div>
 `;
 
+/**
+ * Ceiling for a stored profile photo, in data-URL characters (~1 MB).
+ *
+ * The page sends a 256px JPEG, which lands far below this; the limit only
+ * exists so a hand-crafted request cannot push a huge string into the row.
+ */
+const MAX_AVATAR_CHARS = 1_400_000;
+
 export type GoogleUserProfile = {
   sub: string;
   email?: string;
@@ -97,6 +105,23 @@ export class AuthService {
     const explicit = this.config.get<string>('GOOGLE_CALLBACK_URL')?.trim();
 
     if (requestOrigin && this.isLocalOrigin(requestOrigin)) {
+      // IIS proxies to Nest as http://localhost:5083. That looks local, but
+      // Google must get the public callback registered in Cloud Console.
+      if (explicit && !this.isLocalOrigin(explicit)) {
+        return explicit.replace(/\/$/, '');
+      }
+      const apiBase = (this.config.get<string>('API_PUBLIC_URL') || '').replace(/\/$/, '');
+      if (apiBase && !this.isLocalOrigin(apiBase)) {
+        return `${apiBase}/auth/google/callback`;
+      }
+      return `${requestOrigin.replace(/\/$/, '')}/auth/google/callback`;
+    }
+
+    if (explicit && !this.isLocalOrigin(explicit)) {
+      return explicit.replace(/\/$/, '');
+    }
+
+    if (requestOrigin && !this.isLocalOrigin(requestOrigin)) {
       return `${requestOrigin.replace(/\/$/, '')}/auth/google/callback`;
     }
 
@@ -282,7 +307,14 @@ export class AuthService {
 
     user.userId = Number(record.UserID);
 
-    return { access_token: this.signUserToken(record), user, record };
+    // Seed the profile photo from Google the first time only, so a picture the
+    // user uploaded here is never overwritten on the next sign-in.
+    let signedIn = record;
+    if (profile.picture && !record.AvatarUrl) {
+      signedIn = (await this.users.setAvatar(Number(record.UserID), profile.picture)) ?? record;
+    }
+
+    return { access_token: this.signUserToken(signedIn), user, record: signedIn };
   }
 
   /** Email + password sign-in against infymeet_users. */
@@ -425,6 +457,50 @@ export class AuthService {
 
   publicUser(record: InfymeetUser) {
     return this.users.toPublic(record);
+  }
+
+  /**
+   * Save or clear the signed-in user's profile photo.
+   *
+   * The image arrives as a data URL already scaled down by the browser, which
+   * keeps it small enough to live in the user row — no blob container to
+   * configure, so it behaves identically on a laptop and on the live server.
+   */
+  async setAvatar(
+    userId: number,
+    image: string | null,
+  ): Promise<{ isSuccess: boolean; message: string; record: InfymeetUser | null }> {
+    if (image === null) {
+      const cleared = await this.users.setAvatar(userId, null);
+      return cleared
+        ? { isSuccess: true, message: 'Profile photo removed', record: cleared }
+        : { isSuccess: false, message: 'Could not update your photo.', record: null };
+    }
+
+    const value = image.trim();
+
+    if (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) {
+      return {
+        isSuccess: false,
+        message: 'Please choose a PNG, JPG or WebP image.',
+        record: null,
+      };
+    }
+
+    // The browser resizes to a small square before sending; anything much
+    // larger than that is either a bug or someone bypassing the page.
+    if (value.length > MAX_AVATAR_CHARS) {
+      return {
+        isSuccess: false,
+        message: 'That image is too large. Please choose a smaller photo.',
+        record: null,
+      };
+    }
+
+    const saved = await this.users.setAvatar(userId, value);
+    return saved
+      ? { isSuccess: true, message: 'Profile photo updated', record: saved }
+      : { isSuccess: false, message: 'Could not save your photo.', record: null };
   }
 
   /**

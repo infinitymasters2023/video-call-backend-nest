@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import {
   AvailabilityDto,
+  AvatarDto,
   CompleteProfileDto,
   ContactCodeDto,
   ForgotPasswordDto,
@@ -35,8 +36,77 @@ export class AuthController {
 
   /** The origin the browser actually reached this API on, e.g. https://localhost:5083 */
   private originOf(req: Request): string {
+    const xfHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
+    const xfProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+    if (xfHost && xfHost !== 'localhost' && !xfHost.startsWith('localhost:') && xfHost !== '127.0.0.1' && !xfHost.startsWith('127.0.0.1:')) {
+      const proto = xfProto || (req.secure ? 'https' : 'http');
+      return `${proto}://${xfHost}`;
+    }
+
     const proto = req.secure ? 'https' : req.protocol || 'http';
-    return `${proto}://${req.get('host')}`;
+    const host = req.get('host') || '';
+    const origin = `${proto}://${host}`;
+
+    if (!this.isLoopbackUrl(origin)) return origin;
+
+    const apiPublic = (this.config.get<string>('API_PUBLIC_URL') || '').replace(/\/$/, '');
+    if (apiPublic && !this.isLoopbackUrl(apiPublic)) return apiPublic;
+
+    // Live IIS + a leftover local .env: Host is localhost, but the click came
+    // from meetings.infyshield.com.
+    if (this.clientIsPublicSite(req)) {
+      return 'https://infyvideocallapi.infyshield.com';
+    }
+
+    return origin;
+  }
+
+  private isLoopbackUrl(value: string): boolean {
+    try {
+      const hostname = new URL(value).hostname;
+      return hostname === 'localhost' || hostname === '127.0.0.1';
+    } catch {
+      return false;
+    }
+  }
+
+  private clientIsPublicSite(req: Request): boolean {
+    const publicHosts = ['meetings.infyshield.com', 'infyvideocallapi.infyshield.com'];
+    const hostOf = (value: string) => {
+      try {
+        return new URL(value).hostname;
+      } catch {
+        return '';
+      }
+    };
+    const originHost = hostOf((req.get('origin') || '').trim());
+    if (publicHosts.includes(originHost)) return true;
+    const refererHost = hostOf(req.get('referer') || '');
+    return publicHosts.includes(refererHost);
+  }
+
+  private frontendBase(req: Request, oauthRedirectUri?: string): string {
+    const configured = (this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000').replace(
+      /\/$/,
+      '',
+    );
+    if (!this.isLoopbackUrl(configured)) return configured;
+    if (
+      this.clientIsPublicSite(req) ||
+      (oauthRedirectUri && !this.isLoopbackUrl(oauthRedirectUri))
+    ) {
+      return 'https://meetings.infyshield.com';
+    }
+    return configured;
+  }
+
+  /** IIS ARR rewrites 302 Location headers; send the browser in the page instead. */
+  private sendBrowserTo(res: Response, url: string) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).send(
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Redirecting</title></head><body><script>location.replace(${JSON.stringify(url)})</script></body></html>`,
+    );
   }
 
   @Get('google/config')
@@ -52,9 +122,16 @@ export class AuthController {
   ) {
     // `next` rides along in OAuth state so a shared meeting link survives the
     // detour through Google and the user lands back where they started.
-    return res.redirect(
-      this.authService.getGoogleAuthUrl(next, this.originOf(req)),
-    );
+    const googleUrl = this.authService.getGoogleAuthUrl(next, this.originOf(req));
+
+    // Do not 302. IIS ARR rewrites Location https://accounts.google.com/...
+    // into /o/oauth2/v2/auth on this host, which Nest then 404s.
+    const wantsJson = String(req.headers.accept || '').includes('application/json');
+    if (wantsJson) {
+      return res.json({ url: googleUrl });
+    }
+
+    return this.sendBrowserTo(res, googleUrl);
   }
 
   @Get('google/callback')
@@ -65,14 +142,11 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const frontend = (this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000').replace(
-      /\/$/,
-      '',
-    );
     const { next, redirectUri } = this.authService.decodeOAuthState(state);
+    const frontend = this.frontendBase(req, redirectUri);
 
     if (error || !code) {
-      return res.redirect(`${frontend}/login/?error=google_auth_failed`);
+      return this.sendBrowserTo(res, `${frontend}/login/?error=google_auth_failed`);
     }
 
     try {
@@ -86,10 +160,10 @@ export class AuthController {
       if (user.picture) params.set('picture', user.picture);
       if (user.userId) params.set('userId', String(user.userId));
       if (next) params.set('next', next);
-      return res.redirect(`${frontend}/auth/google-success/?${params.toString()}`);
+      return this.sendBrowserTo(res, `${frontend}/auth/google-success/?${params.toString()}`);
     } catch (err) {
       console.error('Google callback failed', err);
-      return res.redirect(`${frontend}/login/?error=google_auth_failed`);
+      return this.sendBrowserTo(res, `${frontend}/login/?error=google_auth_failed`);
     }
   }
 
@@ -285,6 +359,34 @@ export class AuthController {
         usage,
         plans: this.subscriptions.listPlans(),
       },
+    };
+  }
+
+  /**
+   * Upload or remove the signed-in user's profile photo.
+   *
+   * Send `image` as a data URL to set one, or null to go back to the initial.
+   */
+  @Post('avatar')
+  async setAvatar(
+    @Body() dto: AvatarDto,
+    @Headers('authorization') authorization?: string,
+  ): Promise<ApiResponse> {
+    const token = (authorization ?? '').replace(/^Bearer\s+/i, '').trim();
+    const record = token ? await this.authService.resolveToken(token) : null;
+
+    if (!record) {
+      return { statusCode: 401, isSuccess: false, message: 'Not signed in', data: null };
+    }
+
+    const image = typeof dto.image === 'string' && dto.image.trim() ? dto.image.trim() : null;
+    const result = await this.authService.setAvatar(Number(record.UserID), image);
+
+    return {
+      statusCode: result.isSuccess ? 200 : 400,
+      isSuccess: result.isSuccess,
+      message: result.message,
+      data: result.record ? this.authService.publicUser(result.record) : null,
     };
   }
 

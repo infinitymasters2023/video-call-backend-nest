@@ -4,6 +4,8 @@ import { MeetingsRepository } from 'src/meeting/meetings.repository';
 
 export type PlanId = 'free' | 'pro' | 'enterprise';
 
+export type BillingCycle = 'monthly' | 'yearly';
+
 export interface Plan {
   id: PlanId;
   name: string;
@@ -11,7 +13,14 @@ export interface Plan {
   meetingLimit: number | null;
   blurb: string;
   highlights: string[];
+  /** Price per seat in whole rupees, before tax. Free is 0 on both cycles. */
+  price: Record<BillingCycle, number>;
 }
+
+export const CURRENCY = 'INR';
+
+/** Indian GST applied to a subscription, as a percentage of the subtotal. */
+export const TAX_PERCENT = 18;
 
 export const PLANS: Record<PlanId, Plan> = {
   free: {
@@ -24,6 +33,7 @@ export const PLANS: Record<PlanId, Plan> = {
       'Up to 60 minutes per meeting',
       'HD video and screen share',
     ],
+    price: { monthly: 0, yearly: 0 },
   },
   pro: {
     id: 'pro',
@@ -36,6 +46,8 @@ export const PLANS: Record<PlanId, Plan> = {
       'Recording and live captions',
       'Priority support',
     ],
+    // Yearly is ten months' money for twelve months of service.
+    price: { monthly: 499, yearly: 4990 },
   },
   enterprise: {
     id: 'enterprise',
@@ -48,6 +60,7 @@ export const PLANS: Record<PlanId, Plan> = {
       'Usage analytics',
       'Dedicated account manager',
     ],
+    price: { monthly: 1499, yearly: 14990 },
   },
 };
 
@@ -101,7 +114,14 @@ export class SubscriptionService {
 
     const plan = this.planFor(row.PlanID, row.MeetingLimit);
     const used = Number(row.MeetingsUsed ?? 0);
-    const limit = row.MeetingLimit === null ? null : Number(row.MeetingLimit);
+    // A NULL in the view means the row carries no allowance of its own, not
+    // that the user may host without limit — only a plan whose catalogue entry
+    // is unlimited (Pro, Enterprise) gets no cap. Reading NULL as unlimited is
+    // what showed Free accounts an infinite allowance.
+    const limit =
+      row.MeetingLimit === null || row.MeetingLimit === undefined
+        ? plan.meetingLimit
+        : Number(row.MeetingLimit);
 
     return {
       plan,

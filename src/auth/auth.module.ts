@@ -12,6 +12,8 @@ import { PasswordResetService } from './password-reset.service';
 import { ContactVerificationService } from './contact-verification.service';
 import { SubscriptionService } from './subscription.service';
 import { MeetingsRepository } from 'src/meeting/meetings.repository';
+import { BillingController } from './billing.controller';
+import { BillingService } from './billing.service';
 
 @Module({
   imports: [
@@ -35,7 +37,7 @@ import { MeetingsRepository } from 'src/meeting/meetings.repository';
       },
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, BillingController],
   providers: [
     AuthService,
     HelperService,
@@ -44,6 +46,7 @@ import { MeetingsRepository } from 'src/meeting/meetings.repository';
     PasswordResetService,
     ContactVerificationService,
     SubscriptionService,
+    BillingService,
     MeetingsRepository,
   ],
   exports: [AuthService, UsersRepository, JwtModule],

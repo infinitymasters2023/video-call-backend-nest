@@ -32,6 +32,8 @@ async function bootstrap() {
     httpsOptions ? { httpsOptions } : {},
   );
 
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   // const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
   //   'http://localhost:3000,https://meetings.infyshield.com,http://localhost:5083')
   //   .split(',')
