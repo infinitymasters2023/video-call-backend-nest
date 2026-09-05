@@ -29,6 +29,20 @@ export class SignalingGateway implements OnGatewayDisconnect {
     Map<string, { userName: string; mode: string }>
   >();
 
+  /**
+   * The rules the host last broadcast for a room, or null if they never sent
+   * any. They live on the admin's own socket, so a room with no admin present
+   * has no policy — and every caller below must then fall back to the
+   * host-only default rather than assuming permission.
+   */
+  private roomPolicy(roomId: string): Record<string, boolean> | null {
+    for (const sid of this.getAdminsInRoom(roomId)) {
+      const pol = (this.server.sockets.sockets.get(sid) as any)?.hostPolicy;
+      if (pol) return pol as Record<string, boolean>;
+    }
+    return null;
+  }
+
   /** Return the socket ids of all admins currently inside a room. */
   private getAdminsInRoom(roomId: string): string[] {
     const room = this.server.sockets.adapter.rooms.get(roomId);
@@ -506,19 +520,32 @@ export class SignalingGateway implements OnGatewayDisconnect {
   /**
    * Pure relay of one drawing operation to the rest of the room.
    *
-   * Host only, for the same reason as host-policy: anyone able to emit this
-   * could scribble over everybody's screen. The payload is bounded here so a
-   * single op cannot carry an unbounded point list into every other client.
+   * The host always may. A guest may only while the host has handed annotation
+   * out (`annotateLocked: false`), because anyone able to emit this can
+   * scribble over everybody's screen. No policy broadcast yet means host-only,
+   * so the permission is never granted by an absent rule.
+   *
+   * Two ops stay host-only whatever the policy says: `clear` wipes the board
+   * for the whole room, and `sync` replaces it wholesale — one guest should
+   * not be able to erase everyone else's marks.
+   *
+   * The payload is bounded here so a single op cannot carry an unbounded point
+   * list into every other client.
    */
   @SubscribeMessage('annotate')
   handleAnnotate(
     @MessageBody() data: { roomId?: string; op?: any },
     @ConnectedSocket() client: Socket,
   ) {
-    if (!(client as any).isAdmin) return;
     const roomId = data?.roomId ?? (client as any).roomId;
     const op = data?.op;
     if (!roomId || !op || typeof op !== 'object') return;
+
+    if (!(client as any).isAdmin) {
+      if (op.t === 'clear' || op.t === 'sync') return;
+      // `=== false` on purpose: a missing policy must not read as permission.
+      if (this.roomPolicy(roomId)?.annotateLocked !== false) return;
+    }
 
     if (Array.isArray(op.pts) && op.pts.length > 2000) {
       op.pts = op.pts.slice(0, 2000);
@@ -573,6 +600,47 @@ export class SignalingGateway implements OnGatewayDisconnect {
     });
   }
 
+  /**
+   * Meeting polls.
+   *
+   * A dumb relay on purpose: the host holds the poll and re-broadcasts the whole
+   * thing after every change, so the server never has to track who voted or keep
+   * state that would go stale when a room empties. Only the host may open or
+   * close one; anybody may cast a vote, which the host tallies.
+   */
+  @SubscribeMessage('poll')
+  handlePoll(
+    @MessageBody() data: { roomId?: string; msg?: any },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const roomId = data?.roomId ?? (client as any).roomId;
+    const msg = data?.msg;
+    if (!roomId || !msg || typeof msg !== 'object' || typeof msg.t !== 'string') return;
+
+    // Opening, closing and publishing results are the host's alone.
+    if (msg.t !== 'vote' && !(client as any).isAdmin) {
+      console.warn(`❌ Non-host tried poll.${msg.t}: ${(client as any).userName}`);
+      return;
+    }
+
+    if (msg.t === 'state' && msg.poll) {
+      const p = msg.poll;
+      if (typeof p.question === 'string') p.question = p.question.slice(0, 200);
+      if (Array.isArray(p.options)) {
+        p.options = p.options.slice(0, 6).map((o: any) => ({
+          ...o,
+          text: typeof o?.text === 'string' ? o.text.slice(0, 80) : '',
+        }));
+      }
+    }
+
+    client.to(roomId).emit('poll', {
+      msg,
+      socketId: client.id,
+      userName: (client as any).userName || 'Someone',
+    });
+  }
+
   // =========================
   // HOST POLICY (moderation rules)
   // =========================
@@ -605,6 +673,7 @@ export class SignalingGateway implements OnGatewayDisconnect {
       'chatPrivateLocked',
       'reactionsLocked',
       'shareLocked',
+      'annotateLocked',
       'roomLocked',
     ];
     const policy: Record<string, boolean> = {};
